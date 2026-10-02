@@ -1,0 +1,31 @@
+# Limbic config — fully self-contained (bundled ONNX models, no external services)
+
+storage:
+  provider: sqlite
+
+# Embedding — Arctic Embed 2.0 L via bundled ONNX (in-process, CPU)
+# No endpoint option. No external server dependency.
+# RAG continues to use the external embeddings server independently.
+embedding:
+  provider: local
+  model: Snowflake/snowflake-arctic-embed-l-v2.0
+  dims: 1024
+
+# NLI — contradiction detection (reconsolidation trigger)
+# Bundled ONNX, in-process. Downloads on first use.
+nli:
+  model: MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli
+
+# Entity extraction languages.
+# Default is English only; add languages as needed (spaCy models download on first use).
+nlp:
+  languages: [en]
+
+context_budget: 20
+# NOTE: decay half-life and relevance_floor are ADAPTIVE (limbic_params.json,
+# managed by the trust engine). There is no static yaml knob for them.
+# Fragment gate (2026-09-07): remember() rejects content shorter than BOTH
+# thresholds — conversational fragments ("Yes.", "ok", "Proceed") are not
+# durable facts. Dense short facts (3+ words, e.g. "Alice is vegan") pass.
+fragment_gate_chars: 60
+fragment_gate_words: 3
