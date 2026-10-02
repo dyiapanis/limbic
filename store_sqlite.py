@@ -15,6 +15,7 @@ SQLite gives us:
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
 import os
@@ -22,13 +23,91 @@ import sqlite3
 import struct
 import threading
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import sqlite_vec
 
 from .storage import LimbicStorage
 
+# ponytail: cross-process writer serialization (advisory lock file).
+# Gap: in-process writes are serialized by self._lock (RLock), but OTHER
+# processes (hermes limbic CLI verbs, reindex.py) open this same file and
+# write with only the SQLite busy_timeout between them and the gateway.
+# SQLite serializes write transactions, not multi-statement logical
+# operations — interleaved multi-writer sessions were the plausible cause
+# of the 2026-09-08 page corruption (see the single-writer invariant block
+# in __init__). The old convention "run CLI write verbs only while the
+# profile is stopped" was paper-only; the lock file makes it mechanical.
+# Mechanism: exclusive flock on <db>.writer.lock, taken by every write
+# transaction (the `with self._lock, self._db:` blocks), held only for the
+# transaction — a CLI writer waits at most one gateway transaction, reads
+# never queue; WAL snapshot readers coexist with writers by design.
+# Same-process reentrancy: the fd is cached per (pid, abspath) and SHARED.
+# flock exclusivity is per open file description, so a second
+# SQLiteStorage instance on the same file must NOT open its own fd or it
+# would deadlock against the first (provider config hot-swap overlaps two
+# instances; tests double-open). Refcounted release in close().
+# Fail-open on flock errors — advisory hardening, never a gateway-killer.
+
 logger = logging.getLogger(__name__)
+
+# ── Cross-process writer lock (<db>.writer.lock) ─────────────────────
+# One exclusive flock serializes every write transaction across processes.
+_writer_fds: dict = {}  # (pid, abspath) -> [fd, refcount]
+_writer_mu = threading.Lock()
+
+
+def _writer_lock_path(db_path: str) -> str:
+    return db_path + ".writer.lock"
+
+
+def _writer_acquire(db_path: str):
+    """Acquire the exclusive writer flock; context-manager style.
+
+    Returns None when locking is unavailable — callers treat that as
+    fail-open (advisory mechanism only).
+    """
+    key = (os.getpid(), os.path.abspath(db_path))
+    with _writer_mu:
+        entry = _writer_fds.get(key)
+        if entry is None:
+            try:
+                fd = os.open(_writer_lock_path(db_path),
+                             os.O_RDWR | os.O_CREAT, 0o600)
+            except OSError as e:
+                logger.warning("limbic: writer lock unavailable (%s) — "
+                               "proceeding fail-open", e)
+                return None
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+            except OSError as e:
+                os.close(fd)
+                logger.warning("limbic: flock failed (%s) — proceeding "
+                               "fail-open", e)
+                return None
+            entry = [fd, 0]
+            _writer_fds[key] = entry
+        entry[1] += 1
+        return key
+
+
+def _writer_release(key) -> None:
+    """Drop one claim; the fd closes when the last instance closes."""
+    if key is None:
+        return
+    with _writer_mu:
+        entry = _writer_fds.get(key)
+        if entry is None:
+            return
+        entry[1] -= 1
+        if entry[1] <= 0:
+            fd = entry[0]
+            del _writer_fds[key]
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            os.close(fd)
 
 # Whitelist of updatable facts columns (fact_id excluded — updating the PK
 # would desync vec_index rowid linkage).
@@ -124,9 +203,10 @@ class SQLiteStorage(LimbicStorage):
         # recipe behind the 2026-09-08 page corruption (duplicate rowids,
         # out-of-order cells). SQLite serializes write *transactions*, it
         # does not protect against interleaved multi-process writer bugs.
-        # OPERATORS: run CLI write verbs only while the gateway for that
-        # profile is stopped. Enforced by convention only (an advisory lock
-        # file is a candidate future hardening).
+        # HARDENED 2026-10-02: every write transaction runs under an
+        # exclusive flock on <db>.writer.lock (_write_txn) — CLI verbs and
+        # reindex.py now serialize against the gateway instead of relying
+        # on the old stop-the-profile convention.
         # Corrupt-image policy: pragmas AND schema init raise DatabaseError
         # on a damaged file. Both are wrapped — a corrupt DB must open
         # degraded-but-visible (healthy=False), never crash the gateway.
@@ -166,6 +246,22 @@ class SQLiteStorage(LimbicStorage):
             )
         else:
             logger.debug("limbic: startup quick_check ok at %s", self._db_path)
+
+    def _write_txn(self, body: Callable[[], Any]) -> Any:
+        """Run a write transaction under the cross-process writer flock.
+
+        The in-process lock guards thread access to the shared connection;
+        the flock covers the multi-statement transaction so other processes
+        (CLI verbs, reindex) serialize against it instead of interleaving.
+        Commit happens on body success via `with self._db:`; rollback on
+        exception; flock released in finally, after commit.
+        """
+        key = _writer_acquire(self._db_path)
+        try:
+            with self._lock, self._db:
+                return body()
+        finally:
+            _writer_release(key)
 
     @property
     def healthy(self) -> bool:
@@ -305,7 +401,7 @@ class SQLiteStorage(LimbicStorage):
             metadata.get("created_at", now_iso),
             metadata.get("updated_at", now_iso),
         )
-        with self._lock, self._db:
+        def _txn():
             # AUTOINCREMENT assigns fact_id; lastrowid links the vec row.
             cur = self._db.execute(
                 """INSERT INTO facts (content, user_id, trust_score,
@@ -324,6 +420,7 @@ class SQLiteStorage(LimbicStorage):
                 (fact_id, _serialize_vec(embedding))
             )
             return fact_id
+        return self._write_txn(_txn)
 
     def search(self, embedding: list[float], filters: dict, limit: int) -> list[dict]:
         with self._lock:
@@ -439,11 +536,12 @@ class SQLiteStorage(LimbicStorage):
 
         params.append(fact_id)
         sql = f"UPDATE facts SET {', '.join(set_parts)} WHERE fact_id = ?"
-        with self._lock, self._db:
+        def _txn():
             self._db.execute(sql, params)
+        return self._write_txn(_txn)
 
     def delete_user(self, user_id: str) -> int:
-        with self._lock, self._db:
+        def _txn():
             count = self.count(user_id)
             rows = self._db.execute(
                 "SELECT fact_id FROM facts WHERE user_id = ?", (user_id,)
@@ -458,6 +556,7 @@ class SQLiteStorage(LimbicStorage):
                 "DELETE FROM vec_index WHERE rowid = ?", [(fid,) for fid in fact_ids]
             )
             return count
+        return self._write_txn(_txn)
 
     def export_user(self, user_id: str) -> dict:
         with self._lock:
@@ -600,14 +699,15 @@ class SQLiteStorage(LimbicStorage):
         One transaction: an FTS trigger abort rolls the whole delete back
         and raises instead of committing a half-deleted fact.
         """
-        with self._lock, self._db:
+        def _txn():
             cur = self._db.execute("DELETE FROM facts WHERE fact_id = ?", (fact_id,))
             self._db.execute("DELETE FROM vec_index WHERE rowid = ?", (fact_id,))
             return cur.rowcount > 0
+        return self._write_txn(_txn)
 
     def delete_fact_by_content(self, content: str, user_id: str) -> bool:
         """Best-effort remove one fact matching exact content+user."""
-        with self._lock, self._db:
+        def _txn():
             row = self._db.execute(
                 "SELECT fact_id FROM facts WHERE content = ? AND user_id = ? LIMIT 1",
                 (content, user_id)
@@ -617,6 +717,7 @@ class SQLiteStorage(LimbicStorage):
             self._db.execute("DELETE FROM facts WHERE fact_id = ?", (row["fact_id"],))
             self._db.execute("DELETE FROM vec_index WHERE rowid = ?", (row["fact_id"],))
             return True
+        return self._write_txn(_txn)
 
     # ── Contradiction links (continuing correction) ────────────────
 
@@ -627,13 +728,14 @@ class SQLiteStorage(LimbicStorage):
         Idempotent — INSERT OR IGNORE means a repeated write cannot resurrect a
         link that was already resolved.
         """
-        with self._lock, self._db:
+        def _txn():
             self._db.execute(
                 """INSERT OR IGNORE INTO contradictions
                    (newer_fact_id, older_fact_id, created_at, nli_label, resolved_at)
                    VALUES (?, ?, ?, ?, NULL)""",
                 (newer_fact_id, older_fact_id, _now_iso(), label),
             )
+        return self._write_txn(_txn)
 
     def unresolved_contradictions(self, user_id: str, limit: int) -> list[dict]:
         """Open links for a user, oldest first, bounded.
@@ -662,12 +764,13 @@ class SQLiteStorage(LimbicStorage):
 
     def resolve_contradiction(self, newer_fact_id: int, older_fact_id: int) -> None:
         """Close a link — the correction has landed, or no longer holds."""
-        with self._lock, self._db:
+        def _txn():
             self._db.execute(
                 """UPDATE contradictions SET resolved_at = ?
                    WHERE newer_fact_id = ? AND older_fact_id = ? AND resolved_at IS NULL""",
                 (_now_iso(), newer_fact_id, older_fact_id),
             )
+        return self._write_txn(_txn)
 
     def count_open_contradictions(self, user_id: str) -> int:
         with self._lock:
@@ -681,12 +784,13 @@ class SQLiteStorage(LimbicStorage):
 
     def delete_expired_contradictions(self, cutoff_iso: str) -> int:
         """Drop open links older than the TTL — no longer worth re-checking."""
-        with self._lock, self._db:
+        def _txn():
             cur = self._db.execute(
                 "DELETE FROM contradictions WHERE created_at < ? AND resolved_at IS NULL",
                 (cutoff_iso,),
             )
             return cur.rowcount or 0
+        return self._write_txn(_txn)
 
 # ── Full-text search ───────────────────────────────────────────
 
@@ -762,13 +866,14 @@ class SQLiteStorage(LimbicStorage):
         corruption between facts and the external-content FTS index by
         repopulating it from scratch ('rebuild' is FTS5's own command).
         """
-        with self._lock, self._db:
+        def _txn():
             self._db.execute("INSERT INTO facts_fts(facts_fts) VALUES('rebuild')")
+        return self._write_txn(_txn)
 
     # ── Entity graph ───────────────────────────────────────────────
 
     def store_entities(self, fact_id: int, entities: list[dict]):
-        with self._lock, self._db:
+        def _txn():
             import hashlib
             for ent in entities:
                 name = ent.get("name", "").strip()
@@ -786,6 +891,7 @@ class SQLiteStorage(LimbicStorage):
                     "INSERT OR IGNORE INTO mentions (fact_id, entity_id) VALUES (?, ?)",
                     (fact_id, ent_id)
                 )
+        return self._write_txn(_txn)
 
     def search_graph(self, entity_names: list[str], filters: dict, limit: int) -> list[dict]:
         with self._lock:
@@ -864,11 +970,12 @@ class SQLiteStorage(LimbicStorage):
     # ── Atrophy ────────────────────────────────────────────────────
 
     def mark_atrophy(self, fact_id: int) -> None:
-        with self._lock, self._db:
+        def _txn():
             self._db.execute(
                 "UPDATE facts SET atrophy_marked_at = ? WHERE fact_id = ?",
                 (_now_iso(), fact_id)
             )
+        return self._write_txn(_txn)
 
     def sweep_atrophy(self, before_iso: str, limit: int = 3, user_id: str = "") -> int:
         """Delete facts whose atrophy mark is older than before_iso.
@@ -876,7 +983,7 @@ class SQLiteStorage(LimbicStorage):
         Optional user_id scopes the sweep to that user; without it the
         sweep is global (legacy callers). Single transaction — all-or-nothing.
         """
-        with self._lock, self._db:
+        def _txn():
             if user_id:
                 rows = self._db.execute(
                     """SELECT fact_id FROM facts
@@ -903,6 +1010,7 @@ class SQLiteStorage(LimbicStorage):
                 deleted += 1
 
             return deleted
+        return self._write_txn(_txn)
 
     def count_atrophy_candidates(self) -> int:
         with self._lock:
@@ -1035,8 +1143,9 @@ class SQLiteStorage(LimbicStorage):
         os.makedirs(target_dir, exist_ok=True)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
         target = os.path.join(target_dir, f"limbic-backup-{stamp}.db")
-        with self._lock:
+        def _txn():
             self._db.execute("VACUUM INTO ?", (target,))
+        self._write_txn(_txn)
         logger.info("limbic: backed up %s -> %s", self._db_path, target)
         return target
 
