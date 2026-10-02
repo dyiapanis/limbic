@@ -1,0 +1,30 @@
+# users.yaml — Limbic user manifest (identity config, resides in Limbic)
+#
+# Limbic reads only the identity subset (display_name, scope, platform_ids,
+# guardians). roles and any unknown keys are ignored — the file can also be
+# shared with other infrastructure.
+#
+# Default location: this plugin directory (plugins/limbic/users.yaml).
+# Override per-profile with $HERMES_HOME/users.yaml, or point limbic.yaml
+# users_manifest at any path.
+
+users:
+  alice:
+    display_name: Alice
+    scope: adult
+    platform_ids:
+      matrix: "@alice:example.org"
+      email: alice@example.com
+    guardians: []
+    # roles: consumed by access-control tooling, ignored by Limbic
+    roles:
+      myagent:
+        role: admin
+        toolsets: ["*"]
+
+  bob:
+    display_name: Bob
+    scope: child
+    platform_ids:
+      matrix: "@bob:example.org"
+    guardians: [alice]

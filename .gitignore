@@ -1,0 +1,13 @@
+# Limbic — ephemeral and build artifacts
+*.surdb
+*.pkl
+*.clog
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# User manifest — private deployment data, users.yaml.example ships instead
+users.yaml
