@@ -67,6 +67,13 @@ def _urlretrieve_atomic(url: str, dest: str, min_bytes: int = 1024):
     add a checksum manifest if the model id ever moves to a mirror.
     """
     import urllib.request
+    # Rule-12 hardening (unattended runs fail cleanly, never hang): no global
+    # socket timeout means a stalled HuggingFace connection hangs remember()
+    # indefinitely under cron/gateway. 60s connect/read stall bound.
+    import socket
+    old_timeout = socket.getdefaulttimeout()
+    if old_timeout is None:
+        socket.setdefaulttimeout(60)
     tmp = dest + ".part"
     try:
         urllib.request.urlretrieve(url, tmp)
@@ -78,6 +85,9 @@ def _urlretrieve_atomic(url: str, dest: str, min_bytes: int = 1024):
             os.remove(tmp)
         logger.error("limbic: failed to download %s: %s", url, e)
         raise
+    finally:
+        if old_timeout is None:
+            socket.setdefaulttimeout(None)
 
 
 class OnnxEmbedder(LimbicEmbedder):
