@@ -3,13 +3,21 @@ version: 0.5.1
 description: "Self-organising memory system. Opaque, adaptive, self-contained. Modelled on the biological limbic system."
 author: "D Yiapanis"
 kind: exclusive
+# MemoryProvider-only plugin: tools (remember/recall) and lifecycle hooks are
+# dispatched by MemoryManager from the registered provider — nothing here is a
+# direct ctx.register_* call, so the capability lists are intentionally empty.
+provides_tools: []
+provides_hooks: []
+provides_middleware: []
+requires_env: []
+requires_hermes: ">=0.21.4"
 pip_dependencies:
-  - sqlite-vec
-  - onnxruntime
-  - numpy
-  - tokenizers
-  - pyyaml
-  - spacy
+  - sqlite-vec>=0.1.3,<0.2
+  - onnxruntime>=1.20.1,<2
+  - numpy>=1.26.4,<3
+  - tokenizers>=0.20.3,<0.24
+  - pyyaml>=6.0.1
+  - spacy>=3.8.1,<4
 notes: |
   Ships with two bundled ONNX models (no external services required):
     - Arctic Embed 2.0 L (embedding, 1024 dims, 74 languages, ~2.1GB)
