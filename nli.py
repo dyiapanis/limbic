@@ -132,10 +132,14 @@ class LimbicNLI:
 
         for fname in files:
             dest = os.path.join(self._cache_dir, fname)
-            expect = file_hashes[fname]
+            # Pin keys are HF-tree paths: the ONNX engine is LFS-pinned at
+            # onnx/model.onnx; the aux files download from the repo root.
+            # Cache layout is flat.
+            expect = file_hashes["onnx/model.onnx" if fname == "model.onnx" else fname]
             if os.path.exists(dest):
                 OnnxEmbedder._verify_cached(dest, expect, is_sha1_blob(expect), f"NLI/{fname}")
-                continue
+                if os.path.exists(dest):
+                    continue
             url = f"{base_url}/{fname}" if fname == "model.onnx" else f"{root_url}/{fname}"
             logger.info("limbic NLI: downloading %s (%.0fMB total model)...", fname, MODEL_SIZE_GB * 1024)
             _urlretrieve_atomic(url, dest,

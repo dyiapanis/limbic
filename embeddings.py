@@ -187,7 +187,8 @@ class OnnxEmbedder(LimbicEmbedder):
             expect = file_hashes[f"onnx/{fname}"]
             if os.path.exists(dest):
                 self._verify_cached(dest, expect, is_sha1_blob(expect), fname)
-                continue
+                if os.path.exists(dest):
+                    continue
             url = f"{onnx_url}/{fname}"
             logger.info(
                 "limbic: downloading %s (%.1fGB total model)...",
@@ -209,7 +210,8 @@ class OnnxEmbedder(LimbicEmbedder):
             expect = file_hashes[fname]
             if os.path.exists(dest):
                 self._verify_cached(dest, expect, is_sha1_blob(expect), fname)
-                continue
+                if os.path.exists(dest):
+                    continue
             url = f"{root_url}/{fname}"
             logger.info("limbic: downloading %s...", fname)
             _urlretrieve_atomic(url, dest,
@@ -223,12 +225,16 @@ class OnnxEmbedder(LimbicEmbedder):
         re-downloads on next start)."""
         import hashlib
         if is_sha1:
+            # HF pins non-LFS files by git BLOB oid = sha1(b"blob <size>\0" + content),
+            # NOT plain sha1(content). Hash the blob form or every valid cache file
+            # is rejected and re-downloaded on every start.
             h = hashlib.sha1()
+            h.update(b"blob %d\x00" % os.path.getsize(dest))
             with open(dest, "rb") as f:
                 for chunk in iter(lambda: f.read(1 << 20), b""):
                     h.update(chunk)
             if h.hexdigest() != expect.removeprefix("sha1:"):
-                logger.warning("limbic: cached %s fails sha1 pin — removing for re-download", fname)
+                logger.warning("limbic: cached %s fails sha1 blob-oid pin — removing for re-download", fname)
                 os.remove(dest)
             return
         h = hashlib.sha256()
