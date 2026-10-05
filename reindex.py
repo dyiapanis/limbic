@@ -13,7 +13,9 @@ import os
 import sys
 import time
 
-sys.path.insert(0, os.path.expanduser("~/.hermes/plugins"))
+# honour HERMES_HOME (multiplex/routed homes); default keeps standalone behaviour
+_HERMES_HOME = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
+sys.path.insert(0, os.path.join(_HERMES_HOME, "plugins"))
 
 
 def reindex_agent(agent: str) -> dict:
@@ -21,7 +23,7 @@ def reindex_agent(agent: str) -> dict:
     from limbic.embeddings import create_embedder, EMBEDDING_DIMS
     from limbic.store_sqlite import SQLiteStorage
 
-    hermes = os.path.expanduser("~/.hermes")
+    hermes = _HERMES_HOME
     db_path = os.path.join(hermes, "profiles", agent, "limbic.db")
 
     if not os.path.exists(db_path):

@@ -1541,7 +1541,7 @@ class LimbicMemoryProvider(MemoryProvider):
         """
         return (
             "You have persistent memory via Limbic (SQLite-backed). "
-            "Save durable facts using the `remember(content)` tool — NOT the `memory` tool (which is disabled). "
+            "Save durable facts using the `remember(content)` tool. "
             "Search prior context using the `recall(query)` tool. "
             "Memory is injected into every turn, so keep it compact and focused on facts that "
             "will still matter later.\n"
@@ -1660,11 +1660,15 @@ class LimbicMemoryProvider(MemoryProvider):
         pass
 
     def backup_paths(self) -> list[str]:
-        """Paths to include in hermes backup."""
-        if self._storage and hasattr(self._storage, '_db'):
-            db_path = getattr(self._storage, '_db_path', '')
-            if db_path and os.path.exists(db_path):
-                return [db_path]
+        """Paths to include in hermes backup. Delegates to the storage layer, which
+        snapshots via VACUUM INTO (the live .db + WAL sidecars must never be copied
+        file-by-file while running — torn backups)."""
+        if self._storage and hasattr(self._storage, 'backup_paths'):
+            try:
+                return list(self._storage.backup_paths())
+            except Exception as e:
+                logger.warning("limbic: backup snapshot failed: %s", e)
+                return []
         return []
 
     # ── Helpers ────────────────────────────────────────────────────
@@ -1812,13 +1816,14 @@ class LimbicMemoryProvider(MemoryProvider):
                     "semantics inactive; define users.yaml for multi-user mode",
                     len(seen))
 
-        # 3. Matrix homeserver-suffix heuristic
+        # 3. Matrix identity fallback — full lowercased MXID as the bucket.
+        # Never strip the homeserver or trailing digits: @alice:hs1 and @alice42:evil.org
+        # are DIFFERENT people and must not share a memory store.
         if platform_user_id.startswith("@") and ":" in platform_user_id:
-            local_part = platform_user_id.split(":")[0].lstrip("@")
-            import re
-            base = re.sub(r'\d+$', '', local_part)
-            if base:
-                return base.lower(), [], base.capitalize(), "adult"
+            mxid = platform_user_id.lower()
+            local_part = mxid.split(":")[0].lstrip("@")
+            display = local_part  # display hint from the local part only (cosmetic)
+            return mxid, [], display.capitalize(), "adult"
 
         # Last resort — use as-is
         return platform_user_id.lower(), [], platform_user_id, "adult"
