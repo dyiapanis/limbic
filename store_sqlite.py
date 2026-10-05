@@ -15,7 +15,10 @@ SQLite gives us:
 """
 from __future__ import annotations
 
-import fcntl
+try:  # POSIX only — Windows has no fcntl; initialize degrades to the fail-open path instead of ImportError
+    import fcntl
+except ImportError:  # pragma: no cover
+    fcntl = None
 import json
 import logging
 import os
@@ -71,6 +74,10 @@ def _writer_acquire(db_path: str):
     with _writer_mu:
         entry = _writer_fds.get(key)
         if entry is None:
+            if fcntl is None:
+                logger.warning("limbic: fcntl unavailable (non-POSIX) — "
+                               "proceeding fail-open")
+                return None
             try:
                 fd = os.open(_writer_lock_path(db_path),
                              os.O_RDWR | os.O_CREAT, 0o600)
@@ -168,6 +175,7 @@ class SQLiteStorage(LimbicStorage):
         self._db.row_factory = sqlite3.Row
         self._db.enable_load_extension(True)
         sqlite_vec.load(self._db)
+        self._db.enable_load_extension(False)  # load only what sqlite_vec needs; keep disabled
         self._degraded = False  # set True below on pragma/schema failure
 
         # WAL mode for durability — survives ungraceful restarts

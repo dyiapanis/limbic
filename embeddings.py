@@ -56,15 +56,15 @@ class LimbicEmbedder:
         pass
 
 
-def _urlretrieve_atomic(url: str, dest: str, min_bytes: int = 1024):
-    """Download to a temp file, then rename into place.
+def _urlretrieve_atomic(url: str, dest: str, min_bytes: int = 1024,
+                        expect_sha256: str | None = None):
+    """Download to a temp file, verify, then rename into place.
 
-    Guards the three failure modes of a bare urlretrieve:
+    Guards the failure modes of a bare urlretrieve:
     - partial/torn writes leave no final file (temp is discarded)
     - a concurrent downloader never sees a half-written cache entry
     - a truncated-but-"complete" response (empty/tiny file) is rejected
-    ponytail: no sha256 pinning — HTTPS + HuggingFace is the trust root;
-    add a checksum manifest if the model id ever moves to a mirror.
+    - content that doesn't match the pinned sha256 is rejected (when given)
     """
     import urllib.request
     # Rule-12 hardening (unattended runs fail cleanly, never hang): no global
@@ -79,6 +79,17 @@ def _urlretrieve_atomic(url: str, dest: str, min_bytes: int = 1024):
         urllib.request.urlretrieve(url, tmp)
         if os.path.exists(tmp) and os.path.getsize(tmp) < min_bytes:
             raise RuntimeError(f"download too small ({os.path.getsize(tmp)} bytes) — refusing to cache")
+        if expect_sha256:
+            import hashlib
+            h = hashlib.sha256()
+            with open(tmp, "rb") as f:
+                for chunk in iter(lambda: f.read(1 << 22), b""):
+                    h.update(chunk)
+            got = h.hexdigest()
+            if got != expect_sha256:
+                os.remove(tmp)
+                raise RuntimeError(
+                    f"sha256 mismatch for {url}: got {got}, want {expect_sha256} — refusing to cache")
         os.replace(tmp, dest)
     except Exception as e:
         if os.path.exists(tmp):
@@ -151,31 +162,39 @@ class OnnxEmbedder(LimbicEmbedder):
         )
 
     def _download_model(self):
-        """Download ONNX model files from HuggingFace.
+        """Download ONNX model files from HuggingFace at a PINNED revision with sha256 checks.
 
         ONNX model files are under onnx/ subpath.
         Tokenizer and config files are at the repository root.
         """
         os.makedirs(self._cache_dir, exist_ok=True)
 
-        root_url = f"https://huggingface.co/{EMBEDDING_MODEL_ID}/resolve/main"
+        from .model_pins import model_pin, file_hash, is_sha1_blob
+        pin = model_pin(EMBEDDING_MODEL_ID)
+        rev = pin["revision"]
+        file_hashes = pin["files"]
+
+        root_url = f"https://huggingface.co/{EMBEDDING_MODEL_ID}/resolve/{rev}"
         onnx_url = f"{root_url}/onnx"
 
-        # ONNX model files — under onnx/ subpath
+        # ONNX model files — under onnx/ subpath (cache layout keeps the flat name)
         onnx_files = [
             "model.onnx",
             "model.onnx_data",
         ]
         for fname in onnx_files:
             dest = os.path.join(self._cache_dir, fname)
+            expect = file_hashes[f"onnx/{fname}"]
             if os.path.exists(dest):
+                self._verify_cached(dest, expect, is_sha1_blob(expect), fname)
                 continue
             url = f"{onnx_url}/{fname}"
             logger.info(
                 "limbic: downloading %s (%.1fGB total model)...",
                 fname, EMBEDDING_MODEL_SIZE_GB,
             )
-            _urlretrieve_atomic(url, dest)
+            _urlretrieve_atomic(url, dest,
+                                expect_sha256=None if is_sha1_blob(expect) else expect)
 
         # Tokenizer and config files — at repository root
         root_files = [
@@ -187,13 +206,40 @@ class OnnxEmbedder(LimbicEmbedder):
         ]
         for fname in root_files:
             dest = os.path.join(self._cache_dir, fname)
+            expect = file_hashes[fname]
             if os.path.exists(dest):
+                self._verify_cached(dest, expect, is_sha1_blob(expect), fname)
                 continue
             url = f"{root_url}/{fname}"
             logger.info("limbic: downloading %s...", fname)
-            _urlretrieve_atomic(url, dest)
+            _urlretrieve_atomic(url, dest,
+                                expect_sha256=None if is_sha1_blob(expect) else expect)
 
-        logger.info("limbic: embedding model files downloaded to %s", self._cache_dir)
+        logger.info("limbic: embedding model files verified at pinned revision %s", rev[:12])
+
+    @staticmethod
+    def _verify_cached(dest: str, expect: str, is_sha1: bool, fname: str):
+        """Verify an existing cache file against its pin; delete on mismatch (self-heal
+        re-downloads on next start)."""
+        import hashlib
+        if is_sha1:
+            h = hashlib.sha1()
+            with open(dest, "rb") as f:
+                for chunk in iter(lambda: f.read(1 << 20), b""):
+                    h.update(chunk)
+            if h.hexdigest() != expect.removeprefix("sha1:"):
+                logger.warning("limbic: cached %s fails sha1 pin — removing for re-download", fname)
+                os.remove(dest)
+            return
+        h = hashlib.sha256()
+        with open(dest, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 22), b""):
+                h.update(chunk)
+        got = h.hexdigest()
+        if got != expect:
+            logger.warning("limbic: cached %s fails sha256 pin (%s != %s) — removing",
+                           fname, got[:12], expect[:12])
+            os.remove(dest)
 
     def embed(self, content: str, is_query: bool = False) -> Optional[list[float]]:
         """Generate embedding for a text.

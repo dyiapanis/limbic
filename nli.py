@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 
 # Model metadata — used for download cache path and first-use logging
 MODEL_ID = "MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli"
+NLI_MODEL_ID = MODEL_ID
 MODEL_ONNX_SUBPATH = "onnx/model.onnx"
 MODEL_SIZE_GB = 0.43
 
@@ -109,10 +110,17 @@ class LimbicNLI:
         logger.info("limbic NLI: model loaded (labels=%s)", self._label_map)
 
     def _download_model(self):
-        """Download ONNX model files from HuggingFace."""
+        """Download ONNX model files from HuggingFace at a PINNED revision with sha256 checks."""
         os.makedirs(self._cache_dir, exist_ok=True)
 
-        base_url = f"https://huggingface.co/{MODEL_ID}/resolve/main/onnx"
+        from .embeddings import _urlretrieve_atomic, OnnxEmbedder
+        from .model_pins import model_pin, is_sha1_blob
+        pin = model_pin(NLI_MODEL_ID)
+        rev = pin["revision"]
+        file_hashes = pin["files"]
+
+        root_url = f"https://huggingface.co/{NLI_MODEL_ID}/resolve/{rev}"
+        base_url = f"{root_url}/onnx"
         files = [
             "model.onnx",
             "tokenizer.json",
@@ -124,14 +132,16 @@ class LimbicNLI:
 
         for fname in files:
             dest = os.path.join(self._cache_dir, fname)
+            expect = file_hashes[fname]
             if os.path.exists(dest):
+                OnnxEmbedder._verify_cached(dest, expect, is_sha1_blob(expect), f"NLI/{fname}")
                 continue
-            url = f"{base_url}/{fname}"
+            url = f"{base_url}/{fname}" if fname == "model.onnx" else f"{root_url}/{fname}"
             logger.info("limbic NLI: downloading %s (%.0fMB total model)...", fname, MODEL_SIZE_GB * 1024)
-            from .embeddings import _urlretrieve_atomic
-            _urlretrieve_atomic(url, dest)
+            _urlretrieve_atomic(url, dest,
+                                expect_sha256=None if is_sha1_blob(expect) else expect)
 
-        logger.info("limbic NLI: all model files downloaded to %s", self._cache_dir)
+        logger.info("limbic NLI: all model files verified at pinned revision %s", rev[:12])
 
     @staticmethod
     def _load_label_map(config_path: str) -> dict[int, str]:

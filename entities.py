@@ -94,32 +94,17 @@ class EntityExtractor:
                     self._pipelines[lang] = nlp
                     logger.info("limbic: spaCy model loaded: %s", model)
             except Exception as e:
-                # Model not installed — try auto-download
-                logger.info("limbic: spaCy model %s not found, auto-downloading...", model)
-                try:
-                    self._download_model(model)
-                    nlp = self._load_model(model)
-                    if nlp:
-                        self._pipelines[lang] = nlp
-                        logger.info("limbic: spaCy model downloaded and loaded: %s", model)
-                except Exception as dl_err:
-                    logger.warning("limbic: auto-download of %s failed: %s", model, dl_err)
+                # Model not installed — do NOT auto-download. Runtime pip installs bypass
+                # the plugin dependency manager and pin mutable sources. Log the fix instead.
+                logger.warning(
+                    "limbic: spaCy model %s not installed — entity extraction for '%s' disabled. "
+                    "Install manually: %s -m spacy download %s", model, lang,
+                    __import__("sys").executable, model)
 
         if self._pipelines:
             self._available = True
         else:
             logger.warning("limbic: no spaCy models loaded — entity extraction disabled")
-
-    @staticmethod
-    def _download_model(model: str):
-        """Auto-download a spaCy model via subprocess."""
-        import subprocess, sys
-        result = subprocess.run(
-            [sys.executable, "-m", "spacy", "download", model],
-            capture_output=True, text=True, timeout=120
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"spacy download failed: {result.stderr[:200]}")
 
     def _load_model(self, model: str):
         """Load a spaCy model and add the custom EntityRuler."""
