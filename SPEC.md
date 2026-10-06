@@ -437,7 +437,7 @@ The system ships with two ONNX models, both running in-process on CPU via onnxru
 
 **Model:** `Snowflake/snowflake-arctic-embed-l-v2.0`
 - 1024 dimensions
-- 74 languages (including Greek, English, French, Chinese, Arabic)
+- 74 languages (including English, French, Chinese, Arabic, Greek)
 - ~2.1 GB model cache (ONNX external data format: model.onnx + model.onnx_data)
 - Apache-2.0 license
 - ~10-15ms inference on CPU (ONNX runtime)
@@ -447,7 +447,7 @@ The system ships with two ONNX models, both running in-process on CPU via onnxru
 - Mean pooling + L2 normalisation
 
 **Why this model:**
-- Multilingual with Greek support — covers the fleet's language needs
+- Multilingual
 - 1024 dimensions — richer representations than smaller multilingual MiniLM models
 - 8192 token context — effectively unlimited for fact-length content
 - Apache-2.0 — no licensing concerns for distribution
