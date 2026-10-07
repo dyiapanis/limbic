@@ -188,7 +188,13 @@ def cmd_reindex(args):
     new_embedder = create_embedder(provider._config)
     new_dims_val = int(new_dims) if new_dims else EMBEDDING_DIMS
 
-    result = provider._storage.reindex(new_embedder, new_dims_val) if provider._storage else {"error": "storage not initialised"}
+    # Re-embed + re-stamp: the stamp tells the store which embedder produced
+    # these vectors (the recover path the stale_embedder warning points at —
+    # without it the flag would never clear).
+    from .model_pins import embedder_stamp
+    result = provider._storage.reindex(
+        new_embedder, new_dims_val, embedder_stamp=embedder_stamp()
+    ) if provider._storage else {"error": "storage not initialised"}
     print(json.dumps(result, indent=2, default=str))
 
 

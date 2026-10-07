@@ -81,6 +81,7 @@ class LimbicMemoryProvider(MemoryProvider):
         self._prefetch_count = 0  # incremented every prefetch() call
         self._last_optimize_ts = 0.0  # epoch seconds of last PRAGMA optimize
         self._last_vacuum_ts = 0.0  # epoch seconds of last VACUUM
+        self._embedder_stale = False  # embedder-stamp mismatch (needs reindex)
 
     def initialize(self, session_id: str, **kwargs) -> None:
         """Called by Hermes at session start."""
@@ -120,6 +121,18 @@ class LimbicMemoryProvider(MemoryProvider):
         # Init embedder
         if not self._embedder:
             self._embedder = create_embedder(self._config)
+            # Embedder-stamp check (update mechanism): compare the running
+            # embedder's identity against the DB's record. A mismatch (plugin
+            # updated to a different model/quantization without reindex) marks
+            # the store stale — status surfaces it, reindex clears it.
+            from .model_pins import embedder_stamp
+            try:
+                stamp = embedder_stamp()
+            except Exception:
+                stamp = None
+            check = getattr(self._storage, "check_embedder_stamp", None)
+            if check is not None:
+                self._embedder_stale = check(stamp, getattr(self._embedder, "dims", 0))
 
         # Init NLI classifier (reconsolidation trigger — prediction error detection)
         if not self._nli:
@@ -1300,6 +1313,14 @@ class LimbicMemoryProvider(MemoryProvider):
         """Operator-initiated seeding without conversation."""
         return self.remember(content, user_id=user_id)
 
+    def _embedder_stamp_text(self) -> str:
+        """Human-readable running-embedder identity for stats."""
+        try:
+            from .embeddings import EMBEDDING_MODEL_NAME, EMBEDDING_DIMS
+            return f"{EMBEDDING_MODEL_NAME} ({EMBEDDING_DIMS}d)"
+        except Exception:
+            return "bundled-onnx"
+
     def stats(self, user_id: str | None = None) -> dict:
         """Analytical self-evaluation — query the store for performance metrics.
         
@@ -1321,7 +1342,7 @@ class LimbicMemoryProvider(MemoryProvider):
 
                 # Atrophy metrics
                 atrophy_marked = self._storage.count_atrophy_candidates()
-                
+
                 return {
                     "user_id": user_id,
                     "total_facts": total,
@@ -1330,6 +1351,8 @@ class LimbicMemoryProvider(MemoryProvider):
                     "faded": faded,
                     "atrophy_marked": atrophy_marked,
                     "atrophy_swept": self._atrophy_swept_count,
+                    "embedder": self._embedder_stamp_text(),
+                    "stale_embedder": self._embedder_stale,
                 }
             else:
                 # Aggregate stats across all users
@@ -1364,6 +1387,8 @@ class LimbicMemoryProvider(MemoryProvider):
                 return {
                     "total_facts": total,
                     "users": per_user,
+                    "embedder": self._embedder_stamp_text(),
+                    "stale_embedder": self._embedder_stale,
                     "telemetry": {
                         "prefetch_calls": prefetch_count,
                         "prefetch_avg_ms": prefetch_avg,
