@@ -1,5 +1,5 @@
 name: limbic
-version: 0.5.1
+version: 0.6.0
 description: "Self-organising memory system. Opaque, adaptive, self-contained. Modelled on the biological limbic system."
 author: "D Yiapanis"
 kind: exclusive
@@ -20,11 +20,14 @@ pip_dependencies:
   - spacy>=3.8.1,<4
 notes: |
   Ships with two bundled ONNX models (no external services required):
-    - Arctic Embed 2.0 L (embedding, 1024 dims, 74 languages, ~2.1GB)
+    - Arctic Embed 2.0 L int8 (embedding, 1024 dims, 74 languages, ~570MB)
     - MiniLMv2-L6-mnli-xnli (NLI contradiction detection, 100+ languages, ~430MB)
   Models download from HuggingFace on first use and cache locally.
   Storage: SQLite (limbic.db, WAL mode, sqlite-vec brute-force KNN + FTS5).
   User scoping via WHERE clause on user_id received from host.
   NLI-based correction detection at write time (reconsolidation trigger).
   No LLM cost — all lifecycle mechanisms are deterministic algorithms.
+  Embedder-stamp update mechanism: each store records the identity of the
+  embedder that produced its vectors; a plugin update that changes the
+  embedder marks the store stale until `hermes limbic reindex` re-embeds it.
   CLI commands available via `hermes limbic <cmd>` (stats, export, forget, forget-fact, seed, reindex, fts-rebuild, languages, status).

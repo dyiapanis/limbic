@@ -77,6 +77,10 @@ class LimbicStorage:
     def count_faded(self, user_id: str, threshold: float = 0.3) -> int:
         return 0
 
+    def check_embedder_stamp(self, stamp: str | None, dims: int) -> bool:
+        """Abstract default: no stamping support (never stale)."""
+        return False
+
     def facts_per_user(self) -> list[dict]:
         """Aggregate: [{user_id, facts}, ...]."""
         return []

@@ -10,7 +10,12 @@ _MODELS. A mismatching local cache file is rejected and re-downloaded (self-heal
 so a bad pin cannot poison existing deployments.
 """
 
-# Model 1 — embeddings: Snowflake Arctic Embed 2.0 L
+# Model 1 — embeddings: Snowflake Arctic Embed 2.0 L (int8-quantized ONNX)
+# Quantized model artifact from the same pinned repo/revision as the fp32 one.
+# Measured vs fp32 (2026-10-07, this repo's eval suite): identical hit@1/hit@3/MRR
+# and per-query rank agreement 18/18; cross-lingual EN↔DE/FR/ZH/ES ranks 4/4;
+# vec cosine agreement mean 0.977; CPU embed throughput 19.4 → 57.3 texts/s.
+# Single-file download: 570MB vs 2,267MB fp32.
 EMBEDDING_MODEL_ID = "Snowflake/snowflake-arctic-embed-l-v2.0"
 EMBEDDING_REVISION = "ac6544c8a46e00af67e330e85a9028c66b8cfd9a"
 
@@ -23,8 +28,7 @@ _MODELS: dict[str, dict] = {
     EMBEDDING_MODEL_ID: {
         "revision": EMBEDDING_REVISION,
         "files": {
-            "onnx/model.onnx": "f74aa79745ccfb1e75daa7e8e6552a78402d4de193eb8ca67a931358d3e0a25e",
-            "onnx/model.onnx_data": "fe7d75ff258fbda10a6bea63c5422df5579d625355b1aca69ba6923c0ba604a9",
+            "onnx/model_int8.onnx": "4b164a8bd09dd9806e035bdf3c34a2d81848b3db9642ba2e342b8367c00872d8",
             "tokenizer.json": "39feb9863a378165ab9c5c689047203d789422966c0c58721c5309fd039a8edc",
             "tokenizer_config.json": "sha1:bda426376d27170ae0a14e7d4cf4087efdc39eb5",
             "special_tokens_map.json": "sha1:b1879d702821e753ffe4245048eee415d54a9385",
@@ -49,6 +53,20 @@ _MODELS: dict[str, dict] = {
 def model_pin(model_id: str) -> dict:
     """Pin (revision + file→hash table) for a model id, or raise KeyError."""
     return _MODELS[model_id]
+
+
+def embedder_stamp() -> str:
+    """Identity of the bundled embedder, in one canonical format.
+
+    "<model_id>@<revision>:<engine-artifact>" — used by the embedder-stamp
+    update mechanism (store_sqlite._limbic_meta): provider init checks it,
+    reindex writes it. Single source so CLI and provider never disagree.
+    """
+    engine_key = next(
+        k for k in _MODELS[EMBEDDING_MODEL_ID]["files"]
+        if k.startswith("onnx/") and k.endswith(".onnx")
+    )
+    return f"{EMBEDDING_MODEL_ID}@{EMBEDDING_REVISION}:{engine_key.split('/')[-1]}"
 
 
 def file_hash(path: str) -> dict:

@@ -47,10 +47,13 @@ def test_pin_keys_resolve_for_both_downloaders():
         assert fname in nli_pin["files"], f"nli aux lookup '{fname}' missing in pins"
         assert not fname.startswith("onnx/")
 
-    # embeddings.py: engine keys onnx/-prefixed, aux keys bare
+    # embeddings.py: engine key onnx/-prefixed (int8 single-file artifact), aux keys bare
     emb_pin = mp.model_pin(emb.EMBEDDING_MODEL_ID)
-    for key in ["onnx/model.onnx", "onnx/model.onnx_data"]:
+    for key in ["onnx/model_int8.onnx"]:
         assert key in emb_pin["files"], f"embeddings engine lookup '{key}' missing"
+    assert "onnx/model.onnx" not in emb_pin["files"], (
+        "fp32 engine must NOT be pinned — the bundled artifact is int8"
+    )
     for fname in ["tokenizer.json", "tokenizer_config.json", "special_tokens_map.json",
                   "sentencepiece.bpe.model", "config.json"]:
         assert fname in emb_pin["files"]
