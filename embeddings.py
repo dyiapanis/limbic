@@ -3,7 +3,7 @@
 The sensory input layer. Converts text to vectors.
 
 Two ONNX models run in-process on CPU via onnxruntime:
-  - Arctic Embed 2.0 L (embedding) — XLM-RoBERTa, 1024 dims, 74 languages
+  - Arctic Embed 2.0 L int8 (embedding) — XLM-RoBERTa, 1024 dims, 74 languages
   - MiniLMv2-L6-mnli-xnli (NLI) — see nli.py
 
 No external embedding server. No endpoint configuration. No fastembed dependency.
@@ -25,7 +25,8 @@ logger = logging.getLogger(__name__)
 # ── Model metadata ──────────────────────────────────────────────
 
 EMBEDDING_MODEL_ID = "Snowflake/snowflake-arctic-embed-l-v2.0"
-EMBEDDING_MODEL_SIZE_GB = 2.11
+EMBEDDING_MODEL_SIZE_GB = 0.57  # int8 single-file download (fp32 was 2.11GB)
+EMBEDDING_MODEL_NAME = "Arctic Embed 2.0 L int8"
 EMBEDDING_DIMS = 1024
 EMBEDDING_MAX_SEQ_LENGTH = 512  # XLM-RoBERTa supports 8192 but 512 is sufficient for facts
 
@@ -74,7 +75,10 @@ def _urlretrieve_atomic(url: str, dest: str, min_bytes: int = 1024,
     old_timeout = socket.getdefaulttimeout()
     if old_timeout is None:
         socket.setdefaulttimeout(60)
-    tmp = dest + ".part"
+    # PID-unique temp name: two cold-start downloaders (gateway + cron worker)
+    # sharing ONE .part name clobber each other — the loser's urlretrieve hits
+    # ENOENT at rename time (seen live 2026-10-07 during the int8 rollout).
+    tmp = f"{dest}.{os.getpid()}.part"
     try:
         urllib.request.urlretrieve(url, tmp)
         if os.path.exists(tmp) and os.path.getsize(tmp) < min_bytes:
@@ -104,10 +108,16 @@ def _urlretrieve_atomic(url: str, dest: str, min_bytes: int = 1024,
 class OnnxEmbedder(LimbicEmbedder):
     """Bundled ONNX embedding model. Runs in-process on CPU.
 
-    Downloads Arctic Embed 2.0 L from HuggingFace on first use (~2.1GB).
-    Uses ONNX external data format (model.onnx + model.onnx_data).
+    Downloads Arctic Embed 2.0 L (int8-quantized ONNX) from HuggingFace on
+    first use (single ~570MB file). Quantization is Snowflake's own published
+    artifact; retrieval equivalence to fp32 verified on this repo's eval suite
+    (identical hit rates, 18/18 rank agreement) — see model_pins.py docstring.
     Mean pooling + L2 normalisation (XLM-RoBERTa base).
     """
+
+    # Cache layout: int8 is a single self-contained file (no external data),
+    # cached under its own name so an existing fp32 cache coexists harmlessly.
+    _MODEL_FILE = "model_int8.onnx"
 
     def __init__(self, cache_dir: Optional[str] = None, dims: int = EMBEDDING_DIMS):
         self._session = None
@@ -138,11 +148,10 @@ class OnnxEmbedder(LimbicEmbedder):
             )
             raise
 
-        model_path = os.path.join(self._cache_dir, "model.onnx")
-        model_data_path = os.path.join(self._cache_dir, "model.onnx_data")
+        model_path = os.path.join(self._cache_dir, self._MODEL_FILE)
         tokenizer_path = os.path.join(self._cache_dir, "tokenizer.json")
 
-        if not os.path.exists(model_path) or not os.path.exists(model_data_path):
+        if not os.path.exists(model_path):
             self._download_model()
 
         if not os.path.exists(model_path):
@@ -157,15 +166,17 @@ class OnnxEmbedder(LimbicEmbedder):
         self._tokenizer.enable_truncation(max_length=EMBEDDING_MAX_SEQ_LENGTH)
 
         logger.info(
-            "limbic: embedding model loaded (Arctic Embed 2.0 L, %d dims)",
+            "limbic: embedding model loaded (%s, %d dims)",
+            EMBEDDING_MODEL_NAME,
             self._dims,
         )
 
     def _download_model(self):
         """Download ONNX model files from HuggingFace at a PINNED revision with sha256 checks.
 
-        ONNX model files are under onnx/ subpath.
-        Tokenizer and config files are at the repository root.
+        The int8 ONNX engine is a single self-contained file under onnx/
+        (no external-data companion). Tokenizer and config files are at the
+        repository root.
         """
         os.makedirs(self._cache_dir, exist_ok=True)
 
@@ -177,10 +188,9 @@ class OnnxEmbedder(LimbicEmbedder):
         root_url = f"https://huggingface.co/{EMBEDDING_MODEL_ID}/resolve/{rev}"
         onnx_url = f"{root_url}/onnx"
 
-        # ONNX model files — under onnx/ subpath (cache layout keeps the flat name)
+        # ONNX engine — under onnx/ subpath (cache layout keeps the flat name)
         onnx_files = [
-            "model.onnx",
-            "model.onnx_data",
+            self._MODEL_FILE,
         ]
         for fname in onnx_files:
             dest = os.path.join(self._cache_dir, fname)
@@ -330,7 +340,7 @@ class OnnxEmbedder(LimbicEmbedder):
 def create_embedder(config: dict) -> LimbicEmbedder:
     """Factory — creates the bundled ONNX embedder.
 
-    Only one implementation: OnnxEmbedder (Arctic Embed 2.0 L).
+    Only one implementation: OnnxEmbedder (Arctic Embed 2.0 L int8).
     No endpoint option. No external services. Self-contained.
     """
     emb_config = config.get("embedding", {})

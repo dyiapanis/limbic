@@ -18,6 +18,15 @@ _HERMES_HOME = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
 sys.path.insert(0, os.path.join(_HERMES_HOME, "plugins"))
 
 
+def _current_stamp() -> str | None:
+    """Stamp for the bundled embedder the reindex is about to write."""
+    try:
+        from limbic.model_pins import embedder_stamp
+        return embedder_stamp()
+    except Exception:
+        return None
+
+
 def reindex_agent(agent: str) -> dict:
     """Reindex a single agent's Limbic facts with the bundled ONNX embedder."""
     from limbic.embeddings import create_embedder, EMBEDDING_DIMS
@@ -27,9 +36,16 @@ def reindex_agent(agent: str) -> dict:
     db_path = os.path.join(hermes, "profiles", agent, "limbic.db")
 
     if not os.path.exists(db_path):
-        return {"agent": agent, "error": "no limbic.db found", "status": "skipped"}
+        # _HERMES_HOME may point at a profile dir (multiplex homes) while the
+        # DB actually lives at ~/.hermes/profiles/<agent>/limbic.db — fall
+        # back to the always-canonical layout before giving up.
+        alt = os.path.join(os.path.expanduser("~"), ".hermes", "profiles", agent, "limbic.db")
+        if os.path.exists(alt):
+            db_path = alt
+        else:
+            return {"agent": agent, "error": "no limbic.db found", "status": "skipped"}
 
-    # Build embedder (bundled ONNX — Arctic Embed 2.0 L)
+    # Build embedder (bundled ONNX — Arctic Embed 2.0 L int8)
     embedder = create_embedder({})
 
     # Open storage with current dims for reading
@@ -39,11 +55,13 @@ def reindex_agent(agent: str) -> dict:
     count_before = storage.count()
     print(f"  {agent}: {count_before} facts to reindex")
 
-    # Run reindex
-    result = storage.reindex(embedder, EMBEDDING_DIMS)
+    # Run reindex — passes the embedder stamp so the store records the model
+    # that produced these vectors (mandatory-reindex update mechanism)
+    stamp = _current_stamp()
+    result = storage.reindex(embedder, EMBEDDING_DIMS, embedder_stamp=stamp)
     storage.close()
 
-    return {"agent": agent, **result}
+    return {"agent": agent, "embedder_stamp": stamp, **result}
 
 
 def main():

@@ -177,6 +177,7 @@ class SQLiteStorage(LimbicStorage):
         sqlite_vec.load(self._db)
         self._db.enable_load_extension(False)  # load only what sqlite_vec needs; keep disabled
         self._degraded = False  # set True below on pragma/schema failure
+        self._embedder_stale = False
 
         # WAL mode for durability — survives ungraceful restarts
         try:
@@ -281,6 +282,111 @@ class SQLiteStorage(LimbicStorage):
         except sqlite3.DatabaseError as e:
             logger.error("limbic: health probe failed (possible corruption): %s", e)
             return False
+
+    # ── Embedder stamp (update mechanism) ──────────────────────────
+
+    @property
+    def embedder_stamp(self) -> str | None:
+        """The embedder identity that produced the vectors in vec_index, or
+        None if the DB predates stamping (treated as legacy fp32)."""
+        try:
+            with self._lock:
+                row = self._db.execute(
+                    "SELECT value FROM _limbic_meta WHERE key = 'embedder_stamp'"
+                ).fetchone()
+            return row[0] if row else None
+        except sqlite3.DatabaseError:
+            return None
+
+    @property
+    def stale_embedder(self) -> bool:
+        """True iff the running embedder differs from the stored stamp.
+
+        None stamp on an EMPTY store is fine (fresh DB, first write adopts);
+        None stamp with existing facts means pre-stamp vectors (legacy fp32
+        corpus) — also stale-aware: compare dims only (1024 == 1024 keeps
+        legacy DBs serving while flagging them for a voluntary reindex).
+        """
+        return self._embedder_stale
+
+    def check_embedder_stamp(self, stamp: str | None, dims: int) -> bool:
+        """Compare the running embedder's stamp against the DB's; record the
+        verdict and ADOPT the stamp if the DB had none. Returns stale True/False.
+
+        Stamp format: "<model_id>@<revision>:<artifact>" — artifact distinguishes
+        fp32 vs int8 engines from the same upstream revision.
+        """
+        self._embedder_stale = False
+        stored = self.embedder_stamp
+        if stored is None:
+            # No stamp yet. Empty DB: adopt silently. Populated DB (pre-stamp
+            # legacy): dims marker check — a dimension change against a legacy
+            # corpus MUST flag stale (vectors physically incompatible); same
+            # dims stays not-stale (legacy fp32 vectors remain valid).
+            legacy_dims_row = None
+            try:
+                with self._lock:
+                    legacy_dims_row = self._db.execute(
+                        "SELECT value FROM _limbic_meta WHERE key = 'embedder_stamp_legacy_dims'"
+                    ).fetchone()
+            except sqlite3.DatabaseError:
+                pass
+            if legacy_dims_row is not None:
+                try:
+                    if int(legacy_dims_row[0]) != int(dims):
+                        logger.warning(
+                            "limbic: legacy corpus dims %s != running embedder dims %d — "
+                            "run reindex to re-embed all facts",
+                            legacy_dims_row[0], dims,
+                        )
+                        self._embedder_stale = True
+                        return True
+                except (TypeError, ValueError):
+                    pass
+            try:
+                with self._lock:
+                    has_facts = self._db.execute(
+                        "SELECT 1 FROM facts LIMIT 1"
+                    ).fetchone() is not None
+                    if not has_facts:
+                        self._db.execute(
+                            "INSERT OR REPLACE INTO _limbic_meta(key, value) VALUES ('embedder_stamp', ?)",
+                            (stamp or "",),
+                        )
+                        self._db.commit()
+                    elif stamp:
+                        # Legacy corpus: store dims marker so future DIMENSION
+                        # changes hard-fail detection (checked above).
+                        self._db.execute(
+                            "INSERT OR REPLACE INTO _limbic_meta(key, value) VALUES ('embedder_stamp_legacy_dims', ?)",
+                            (str(dims),),
+                        )
+                        self._db.commit()
+            except sqlite3.DatabaseError as e:
+                logger.warning("limbic: embedder stamp adopt failed: %s", e)
+            return False
+        if stored == "" and stamp is None:
+            return False
+        if stored != (stamp or ""):
+            # Note: stamp=None here means pin-table derivation failed host-side,
+            # not a real model change — flags stale once, self-heals next start.
+            logger.warning(
+                "limbic: embedder mismatch — vectors stamped %s, running embedder %s: "
+                "run `hermes limbic reindex` to re-embed all facts",
+                stored or "(empty)", stamp or "(none)",
+            )
+            self._embedder_stale = True
+        return self._embedder_stale
+
+    def set_embedder_stamp(self, stamp: str) -> None:
+        """Record the embedder stamp (called by reindex after the atomic swap)."""
+        def _txn():
+            self._db.execute(
+                "INSERT OR REPLACE INTO _limbic_meta(key, value) VALUES ('embedder_stamp', ?)",
+                (stamp,),
+            )
+        self._write_txn(_txn)
+        self._embedder_stale = False
 
     def _init_schema(self):
         """Create all tables, indexes, triggers if they don't exist."""
@@ -389,6 +495,19 @@ class SQLiteStorage(LimbicStorage):
                 INSERT INTO facts_fts(facts_fts, rowid, content) VALUES('delete', old.fact_id, old.content);
                 INSERT INTO facts_fts(rowid, content) VALUES (new.fact_id, new.content);
             END
+        """)
+
+        # Embedder stamp — records which model (id + revision + quantization)
+        # produced the vectors in vec_index. Written on first open (adoption),
+        # compared on every open thereafter: a mismatch means the running
+        # embedder differs from the one that embedded the stored facts, so
+        # retrieval quality is silently degraded until reindex. Surface as
+        # stale_embedder=True in status; `hermes limbic reindex` clears it.
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS _limbic_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
         """)
 
         self._db.commit()
@@ -1036,8 +1155,14 @@ class SQLiteStorage(LimbicStorage):
 
     # ── Reindex ────────────────────────────────────────────────────
 
-    def reindex(self, new_embedder, new_dims: int) -> dict:
+    def reindex(self, new_embedder, new_dims: int,
+                embedder_stamp: str | None = None) -> dict:
         """Re-embed all facts with a new embedder and atomically rebuild vec_index.
+
+        On success records `embedder_stamp` (the new embedder's identity) so
+        subsequent opens verify against it — the mandatory-reindex mechanism:
+        a plugin update that changes the embedder marks the store stale
+        (stale_embedder=True) until reindex is run and clears it.
 
         Crash safety: all embeddings are computed BEFORE the index is touched;
         the DROP → CREATE → INSERT swap then runs in ONE explicit transaction
@@ -1081,7 +1206,15 @@ class SQLiteStorage(LimbicStorage):
                 cur.close()  # release the read txn before BEGIN (a live cursor holds it)
 
                 if total == 0:
+                    # Empty store: nothing to embed, but still adopt the stamp —
+                    # the DB will be served by THIS embedder from now on.
+                    if embedder_stamp:
+                        try:
+                            self.set_embedder_stamp(embedder_stamp)
+                        except sqlite3.DatabaseError as e:
+                            logger.warning("limbic: reindex stamp write failed: %s", e)
                     return {"reindexed": 0, "status": "complete",
+                            "embedder_stamp": embedder_stamp,
                             "note": "no facts to reindex"}
 
                 # Never swap a good index for an empty one: if every embed
@@ -1114,12 +1247,22 @@ class SQLiteStorage(LimbicStorage):
                 elapsed = time.time() - t0
                 logger.info("limbic: reindex — %d stored in %.1fs", len(embedded), elapsed)
 
+                # Stamp the new embedder identity (outside the index txn —
+                # the vectors are already committed; a failure here leaves
+                # correct vectors with a stale flag, never the reverse).
+                if embedder_stamp:
+                    try:
+                        self.set_embedder_stamp(embedder_stamp)
+                    except sqlite3.DatabaseError as e:
+                        logger.warning("limbic: reindex stamp write failed: %s", e)
+
                 return {
                     "reindexed": len(embedded),
                     "errors": errors,
                     "skipped_blank": skipped_blank,
                     "elapsed_s": round(elapsed, 1),
                     "new_dims": new_dims,
+                    "embedder_stamp": embedder_stamp,
                     "status": "complete"
                 }
 

@@ -2,7 +2,7 @@
 
 Self-Organising Memory for AI Agents
 
-**Version 0.5.1** · Author: D Yiapanis · License: PolyForm Noncommercial 1.0.0 (source-available; commercial use requires a separate license)
+**Version 0.6.0** · Author: D Yiapanis · License: PolyForm Noncommercial 1.0.0 (source-available; commercial use requires a separate license)
 
 Limbic is a self-organising memory system for AI agents. It stores facts, learns which ones matter through interaction, and surfaces the right context at the right time — without ever calling an LLM. Designed for [Hermes Agent](https://hermes-agent.nousresearch.com) and implements the upstream `MemoryProvider` ABC.
 
@@ -59,8 +59,8 @@ The plugin lives at `~/.hermes/plugins/limbic/`. Hermes loads it automatically f
 hermes limbic languages --set en,fr,el   # persists to limbic.yaml; models download on first use
 ```
 
-**First-use downloads** (~2.5GB total, cached locally, one-time):
-- Embedding model — Arctic Embed 2.0 L (~2.1GB)
+**First-use downloads** (~1.1GB total, cached locally, one-time):
+- Embedding model — Arctic Embed 2.0 L int8 (~570MB; Snowflake's own quantized ONNX, retrieval-equivalent to fp32 — see Model section)
 - NLI model — MiniLMv2-L6-mnli-xnli (~430MB)
 - spaCy NER models — `en_core_web_sm` + `fr_core_news_sm` (~14.5MB each)
 
@@ -124,10 +124,15 @@ If recall is poor, change the environment:
 - Facts fading too fast? The decay half-life is adaptive — feed the system steady retrieval traffic on the facts that matter
 - System not learning? Feed it more experiences (more water)
 
-After changing embedding dimensions, reindex existing facts (run on the host where Hermes is installed — the script imports Hermes core):
+After changing embedding dimensions — or upgrading the plugin when the bundled
+embedder has changed — reindex existing facts. The store records which embedder
+produced its vectors (the embedder stamp); after an embedder-changing update,
+`stats` reports `stale_embedder: true` and retrieval quality is degraded until
+reindex is run (run on the host where Hermes is installed — the script imports Hermes core):
 
 ```bash
 python3 ~/.hermes/plugins/limbic/reindex.py --agent <profile-name>
+python3 ~/.hermes/plugins/limbic/reindex.py --all          # every profile
 ```
 
 ---
