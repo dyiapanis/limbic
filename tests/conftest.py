@@ -1,22 +1,36 @@
-"""Make `import limbic` resolve to THIS repo, not any installed/live copy."""
+"""Standalone test harness.
+
+Two jobs:
+1. Make `import limbic` resolve to THIS repo, not any installed/live copy.
+2. Stand in the hermes-core `agent.*` interface when running OUTSIDE a Hermes
+   install (CI) — the plugin's provider imports the MemoryProvider ABC from
+   core; the shim supplies the minimal import surface (no behavioural code).
+   Inside a Hermes install the real core is importable and the shim no-ops.
+"""
 import os
 import sys
+import types
 
-# The repo root IS the `limbic` package — put its PARENT on sys.path.
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+REPO_PARENT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-# CI shim — Hermes core (`agent.*`) is not importable on a standalone checkout.
-# The real ABC is used whenever Limbic runs inside Hermes; here we stand in the
-# minimal interface surface the suite exercises (no behavioural code).
+def _agent_importable() -> bool:
+    for entry in list(sys.path):
+        try:
+            if os.path.isdir(os.path.join(entry, "agent")):
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def _install_hermes_compat_shim():
-    if _has_agent():
+    if _agent_importable():
         return
-    import types
     agent_mod = types.ModuleType("agent")
     mp = types.ModuleType("agent.memory_provider")
 
-    class MemoryProvider:  # ABC stand-in with the plugin's contract
+    class MemoryProvider:  # interface stand-in — ABC semantics live in core
         def initialize(self, *a, **k): raise NotImplementedError
         def prefetch(self, *a, **k): raise NotImplementedError
         def remember(self, *a, **k): raise NotImplementedError
@@ -29,7 +43,7 @@ def _install_hermes_compat_shim():
         def status(self, *a, **k): return {}
         def stats(self, *a, **k): return {}
 
-    class RecallStatus:  # enum-shaped stand-in (tests construct/compare)
+    class RecallStatus:
         OK = "ok"
         NO_RESULT = "no_result"
         def __init__(self, status="", results=None, count=0):
@@ -46,12 +60,8 @@ def _install_hermes_compat_shim():
     sys.modules["agent.memory_provider"] = mp
 
 
-def _has_agent():
-    try:
-        import agent  # noqa: F401
-        return True
-    except ImportError:
-        return False
-
-
+# ORDER MATTERS: shim BEFORE the parent-path insert — pytest imports the
+# `limbic` package (rootdir has __init__.py) during conftest collection,
+# before any test module import can trigger it again.
 _install_hermes_compat_shim()
+sys.path.insert(0, REPO_PARENT)
