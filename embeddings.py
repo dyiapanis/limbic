@@ -228,6 +228,31 @@ class OnnxEmbedder(LimbicEmbedder):
                                 expect_sha256=None if is_sha1_blob(expect) else expect)
 
         logger.info("limbic: embedding model files verified at pinned revision %s", rev[:12])
+        self._gc_cache()
+
+    def _gc_cache(self):
+        """Delete cache-dir files not in the pin manifest (stale orphans from a
+        previous model/quantization — e.g. the fp32 model.onnx + model.onnx_data
+        a 0.5.x→0.6.0 upgrader carries, ~2.27GB). Only ever touches the model
+        cache dir; the DB and Limbic state live elsewhere."""
+        from .model_pins import model_pin
+        pin = model_pin(EMBEDDING_MODEL_ID)
+        allowed = {k.rsplit("/", 1)[-1] for k in pin["files"]}
+        self._gc_stale_files(self._cache_dir, allowed)
+
+    @staticmethod
+    def _gc_stale_files(cache_dir: str, allowed: set[str]):
+        if not os.path.isdir(cache_dir):
+            return
+        for name in os.listdir(cache_dir):
+            path = os.path.join(cache_dir, name)
+            if os.path.isfile(path) and name not in allowed:
+                size_mb = os.path.getsize(path) / (1 << 20)
+                try:
+                    os.remove(path)
+                    logger.info("limbic: cache GC removed stale non-pinned file %s (%.0fMB)", name, size_mb)
+                except OSError as e:
+                    logger.warning("limbic: cache GC could not remove %s: %s", path, e)
 
     @staticmethod
     def _verify_cached(dest: str, expect: str, is_sha1: bool, fname: str):

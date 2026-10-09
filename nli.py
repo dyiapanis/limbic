@@ -146,6 +146,10 @@ class LimbicNLI:
                                 expect_sha256=None if is_sha1_blob(expect) else expect)
 
         logger.info("limbic NLI: all model files verified at pinned revision %s", rev[:12])
+        # Cache GC — same policy as the embedder: drop non-pinned stale files.
+        # Pin keys mix "onnx/model.onnx" and root names; cache layout is flat.
+        allowed = {k.rsplit("/", 1)[-1] for k in file_hashes}
+        OnnxEmbedder._gc_stale_files(self._cache_dir, allowed)
 
     @staticmethod
     def _load_label_map(config_path: str) -> dict[int, str]:
