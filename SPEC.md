@@ -304,14 +304,20 @@ recall(query: str) → {"results": [...], "count": N, "status": "ok", "top_score
 recall(query: str) → {"results": [], "count": 0, "status": "no_confident_match", "top_score": S}
 ```
 
-**Recall-confidence gate (abstention):** when the best fact's composite score falls
-below the adaptive `recall_confidence_floor` (default 0.40), recall reports
-`no_confident_match` instead of surfacing a near-miss — read-side metacognition.
+**Recall-confidence gate (abstention):** when the best fact's RELEVANCE — the raw
+cosine similarity, NOT the trust-modulated composite — falls below the adaptive
+`recall_confidence_floor` (default 0.40), recall reports `no_confident_match`
+instead of surfacing a near-miss — read-side metacognition. The same top-relevance
+guard applies to prefetch: if even the best fact can't clear the floor, nothing is
+injected that turn (per-fact `relevance_floor` filtering is unchanged on top of
+it). The gate is deliberately cosine-gated: composite conflates match confidence
+with fact trust — natural queries about recently-stored (low-trust) facts would
+falsely abstain (measured: 5/10 natural probes abstained via composite vs 0/10 via
+cosine, independent review 2026-10-10). Calibration (live 429-fact store):
+answerable top-cosine 0.63–0.95 vs unanswerable 0.15–0.30 — the floor sits mid-gap.
 The agent should treat an abstention as "memory has nothing on this," not as
-silence to paper over: answer from what you know, don't guess and don't
-attribute anything to memory. Calibration (live 429-fact store, 2026-10-10):
-answerable top-cosine 0.63–0.95 vs unanswerable 0.15–0.30 — the gate sits in the
-middle of a 0.33-wide separation.
+silence to paper over: answer from what you know, don't guess and don't attribute
+anything to memory.
 
 And a context block that appears before turns where memory is relevant:
 
