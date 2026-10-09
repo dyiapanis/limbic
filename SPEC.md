@@ -438,7 +438,10 @@ The system ships with two ONNX models, both running in-process on CPU via onnxru
 **Model:** `Snowflake/snowflake-arctic-embed-l-v2.0`
 - 1024 dimensions
 - 74 languages (including English, French, Chinese, Arabic, Greek)
-- ~2.1 GB model cache (ONNX external data format: model.onnx + model.onnx_data)
+- ~570 MB model cache (int8-quantized ONNX, single self-contained file: model_int8.onnx)
+- Cache hygiene: at model-verification time, files in the cache directory that are not in the
+  pin manifest are deleted (stale orphans from a previous model or quantization are reclaimed
+  automatically; the database and Limbic state are never touched)
 - Apache-2.0 license
 - ~10-15ms inference on CPU (ONNX runtime)
 - 8192 token max sequence (truncated to 512 for facts — sufficient for memory content)
@@ -464,7 +467,9 @@ The system ships with two ONNX models, both running in-process on CPU via onnxru
 **Model:** `MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli`
 - 3-class output: entailment, neutral, contradiction
 - 100+ languages (including Greek, English, French, Chinese, Arabic)
-- ~430 MB model cache (ONNX)
+- ~430 MB model cache (ONNX), downloaded on first contradiction-check — not at install or startup
+  (the provider holds only a lightweight classifier shell until a write with similarity > 0.70
+  triggers the first classification; the same non-pinned-file GC policy as the embedder applies)
 - MIT license
 - ~3-5ms per pair on CPU (ONNX runtime)
 - 107M parameters (distilled from XLM-RoBERTa-large)
