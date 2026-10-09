@@ -109,6 +109,13 @@ class LimbicNLI:
 
         logger.info("limbic NLI: model loaded (labels=%s)", self._label_map)
 
+        # Cache GC — every start (not only download), same policy as the embedder:
+        # drop files not in the pin manifest. Pin keys mix "onnx/model.onnx" and
+        # root names; cache layout is flat.
+        from .model_pins import model_pin
+        allowed = {k.rsplit("/", 1)[-1] for k in model_pin(NLI_MODEL_ID)["files"]}
+        OnnxEmbedder._gc_stale_files(self._cache_dir, allowed)
+
     def _download_model(self):
         """Download ONNX model files from HuggingFace at a PINNED revision with sha256 checks."""
         os.makedirs(self._cache_dir, exist_ok=True)
