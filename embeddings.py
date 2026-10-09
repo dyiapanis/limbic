@@ -144,6 +144,7 @@ class OnnxEmbedder(LimbicEmbedder):
                 return
 
             self._load_model_locked()
+            self._gc_cache()  # post-load: runs on EVERY start, not only download — SPEC-honest
 
     def _load_model_locked(self):
         try:
@@ -236,7 +237,6 @@ class OnnxEmbedder(LimbicEmbedder):
                                 expect_sha256=None if is_sha1_blob(expect) else expect)
 
         logger.info("limbic: embedding model files verified at pinned revision %s", rev[:12])
-        self._gc_cache()
 
     def _gc_cache(self):
         """Delete cache-dir files not in the pin manifest (stale orphans from a
