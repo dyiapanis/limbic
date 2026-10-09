@@ -121,6 +121,12 @@ class LimbicMemoryProvider(MemoryProvider):
         # Init embedder
         if not self._embedder:
             self._embedder = create_embedder(self._config)
+            # Warm the model NOW (one-time ~1s ONNX session load) so the first
+            # prefetch doesn't pay it on the dispatch path. Steady-state embed
+            # is ~17-19ms (measured 2026-10-10); the 1s was load, not inference.
+            # Fire-and-forget thread: initialize stays fast, first embed re-checks.
+            import threading
+            threading.Thread(target=self._warm_embedder, daemon=True).start()
             # Embedder-stamp check (update mechanism): compare the running
             # embedder's identity against the DB's record. A mismatch (plugin
             # updated to a different model/quantization without reindex) marks
@@ -614,10 +620,40 @@ class LimbicMemoryProvider(MemoryProvider):
             return {"error": "No user_id resolved", "results": [], "count": 0}
 
         results = self._search(query, uid, session_id=session_id or "")
+        if not results:
+            return {"results": [], "count": 0,
+                    "status": "no_confident_match", "top_score": 0.0}
+
+        # Recall-confidence gate (read-side metacognition): the best fact's
+        # RELEVANCE (cosine — the scale this floor is calibrated on) must clear
+        # the floor, else this is a near-miss. Deliberately NOT composite:
+        # composite multiplies cosine by a trust damping factor (up to -20%),
+        # conflating "how relevant was the match" with "how much do we trust
+        # that fact" — natural queries about low-trust (new) facts would
+        # falsely abstain (measured: 5/10 natural probes abstained on the
+        # composite scale, 0/10 on cosine).
+        trust = self._trust
+        if trust is None:
+            return {"error": "Limbic not initialised", "results": [], "count": 0}
+        conf_floor = trust.get("recall_confidence_floor")
+        top = max(float(r.get("relevance", r.get("composite_score", 0.0)) or 0.0) for r in results)
+        if top < conf_floor:
+            return {"results": [], "count": 0, "status": "no_confident_match",
+                    "top_score": round(top, 4)}
         return {
             "results": [{"content": r["content"]} for r in results],
             "count": len(results),
+            "status": "ok",
+            "top_score": round(top, 4),
         }
+
+    def _warm_embedder(self) -> None:
+        """One-time ONNX session load off the dispatch path (see initialize)."""
+        try:
+            self._embedder.embed("limbic: warmup", is_query=True)
+            logger.info("limbic: embedder warmed (~1s ONNX load paid outside dispatch)")
+        except Exception as e:
+            logger.warning("limbic: embedder warmup failed (will load lazily on first embed): %s", e)
 
     def _search(self, query: str, user_id: str, limit: int = 20, session_id: str = "",
                 user_message: str = "") -> list[dict]:
@@ -715,15 +751,30 @@ class LimbicMemoryProvider(MemoryProvider):
                     emb_score = 1.0 - self._cosine_distance(embedding, stored)
                     emb_score = float(emb_score or 0.0)
 
+            conf_floor = self._trust.get("recall_confidence_floor")
             if activation < 0.5:
-                # Silent — not surfaced normally, kept as a fallback for when
-                # nothing active gates. Uses the cosine `emb_score` hoisted
-                # above, NOT `score` (rank scale, ~0.016-0.033 — never reaches
-                # a floor of 0.25, so this fallback could never fire).
-                if emb_score >= floor:
+                # Confidence rescue: a just-stored fact with activation < 0.5
+                # (maturation sigmoid early, retrieval_count 0) but STRONG cosine
+                # (≥ recall_confidence_floor) IS the correct answer for this
+                # query — demoting it to the silent fallback pool lets stale
+                # matured junk (past floor with 0.25-0.32 cosines) starve it.
+                # Measured live: the true best fact (0.534) sat silent while
+                # 0.28-0.32 stale facts gated as active. High relevance IS the
+                # evidence of memory's answer; activation tracks repetition,
+                # not correctness of the match.
+                if emb_score >= conf_floor:
+                    surface_as_active = True
+                elif emb_score >= floor:
                     fact["composite_score"] = emb_score
                     fact["activation"] = activation
                     silent_facts.append(fact)
+                    continue
+                else:
+                    continue
+            else:
+                surface_as_active = emb_score >= floor
+
+            if not surface_as_active:
                 continue
 
             # Composite score — relevance is MANDATORY, trust/activation only
@@ -800,6 +851,21 @@ class LimbicMemoryProvider(MemoryProvider):
 
         # Step 2: Search
         results = self._search(query, uid, session_id=session_id, user_message=query)
+
+        # Top-confidence guard (same defect class as the recall gate): if even
+        # the best fact's relevance (cosine) can't clear recall_confidence_floor,
+        # the turn's query is a near-miss — inject nothing rather than bias the
+        # LLM with tangential facts. Per-fact relevance_floor still applies below.
+        trust = self._trust
+        if trust is not None and results:
+            top_rel = max(float(r.get("relevance", r.get("composite_score", 0.0)) or 0.0)
+                          for r in results)
+            if top_rel < trust.get("recall_confidence_floor"):
+                logger.info("limbic: prefetch abstained (top relevance %.3f < %.3f)",
+                            top_rel, trust.get("recall_confidence_floor"))
+                self._prefetch_latencies.append((time.perf_counter() - start_ts) * 1000)
+                return ""
+
         logger.info("limbic: prefetch user=%s results=%d", uid, len(results))
 
         # Step 3: Update retrieval metadata. NO trust boost here —

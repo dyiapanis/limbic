@@ -37,6 +37,12 @@ DEFAULT_PARAMS = {
     "maturation_t_half":    {"value": 168,  "min": 24,    "max": 336},  # hours
     "maturation_k":         {"value": 48,   "min": 12,    "max": 96},
     "relevance_floor":      {"value": 0.25, "min": 0.15, "max": 0.60},
+    # Recall-confidence gate (no_confident_match abstention): if the best fact's
+    # relevance (top cosine) is below this, recall() reports an abstention
+    # instead of surfacing a near-miss. Calibrated 2026-10-10 on the live
+    # production store (429 facts): answerable top-cosine 0.63-0.95,
+    # unanswerable 0.15-0.30 — 0.40 sits in a 0.33-wide gap.
+    "recall_confidence_floor": {"value": 0.40, "min": 0.30, "max": 0.60},
     "interference_penalty": {"value": 0.20, "min": 0.02, "max": 0.25},
     "surprise_boost":       {"value": 0.10, "min": 0.02, "max": 0.20},
     "surprise_percentile":  {"value": 0.90, "min": 0.80, "max": 0.99},

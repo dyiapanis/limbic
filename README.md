@@ -2,7 +2,7 @@
 
 Self-Organising Memory for AI Agents
 
-**Version 0.6.0** · Author: D Yiapanis · License: PolyForm Noncommercial 1.0.0 (source-available; commercial use requires a separate license)
+**Version 0.6.1** · Author: D Yiapanis · License: PolyForm Noncommercial 1.0.0 (source-available; commercial use requires a separate license)
 
 Limbic is a self-organising memory system for AI agents. It stores facts, learns which ones matter through interaction, and surfaces the right context at the right time — without ever calling an LLM. Designed for [Hermes Agent](https://hermes-agent.nousresearch.com) and implements the upstream `MemoryProvider` ABC.
 
@@ -25,7 +25,8 @@ The agent sees two tools (`remember`, `recall`). The operator sees one file (`li
 - **Bayesian surprise** — novel facts get a trust boost
 - **Priming-based reconsolidation** — corrections propagate through trust dynamics, no content ever modified
 - **Synaptic atrophy** — mark-and-sweep gradual removal of unused facts. Virtual decay (query-time) + physical removal (sweep)
-- **Adaptive parameters** — self-tuning relevance floor, decay half-life, and maturation curve
+- **Recall-confidence gate** — when memory has nothing relevant for a query, recall says so (`no_confident_match`) instead of surfacing near-misses; agents answer from what they know rather than fabricating memory
+- **Adaptive parameters** — self-tuning relevance floor, recall-confidence floor, decay half-life, and maturation curve
 - **Database triggers** — auto-maturity handled atomically by a SQLite trigger
 - **ABC compliance** — inherits `MemoryProvider` ABC from Hermes core. Implements `get_config_schema`, `save_config`, `system_prompt_block`, `on_pre_compress`, `on_memory_write`.
 
