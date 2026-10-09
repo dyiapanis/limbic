@@ -138,6 +138,60 @@ python3 ~/.hermes/plugins/limbic/reindex.py --all          # every profile
 
 ---
 
+## Multi-User Mode
+
+Limbic scopes memories per user automatically. Resolution order for every
+`user_id` the host passes in:
+
+1. **`users.yaml` present** → multi-user mode: canonical buckets, guardian
+   semantics (a guardian may write into a ward's scope; others may not),
+   display names in injected context
+2. **No manifest, one user seen** → single-user mode: all memories attribute
+   to that raw platform ID (scoping still correct — one bucket)
+3. **No manifest, multiple users seen** → each user STILL gets an isolated
+   bucket under their raw ID (full MXID or platform handle — never stripped,
+   `@alice:hs1` ≠ `@alice42:evil.org`), with a log warning that multi-user
+   mode is misconfigured
+
+Enable multi-user mode by copying the shipped example next to the plugin code
+(or set `users_manifest:` in `limbic.yaml` to any path):
+
+```bash
+cp ~/.hermes/plugins/limbic/users.yaml.example \
+   ~/.hermes/plugins/limbic/users.yaml
+```
+
+```yaml
+# users.yaml — identity only; limbic reads display_name, scope,
+# platform_ids, guardians. Roles are ignored here (see access-control).
+users:
+  alice:
+    display_name: Alice
+    scope: adult
+    platform_ids:
+      matrix: "@alice:example.org"
+      telegram: "123456789"
+    guardians: []
+  bob:
+    display_name: Bob
+    scope: child
+    guardians: [alice]
+    platform_ids:
+      matrix: "@bob:example.org"
+```
+
+The file is deployment-private (gitignored); `users.yaml.example` ships in
+its place. Per-profile overrides: `$HERMES_HOME/users.yaml` beats the plugin
+directory copy. Other plugins may read the same manifest for their own
+identity needs (workspace delivery routing, credential prefixes) — it is the
+one identity file in the stack.
+
+---
+
+## Operator Functions
+
+---
+
 ## Operator Functions
 
 ```
