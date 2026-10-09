@@ -1,6 +1,7 @@
 
 """Cache GC — stale non-pinned files are removed at model-verification time."""
 import os
+import tempfile
 
 
 def _make_iso_cache(tmp_path):
@@ -39,13 +40,11 @@ def test_gc_keeps_pinned_files(tmp_path):
 def test_gc_noop_on_missing_dir():
     from limbic.embeddings import OnnxEmbedder
     # must not raise when the cache dir does not exist yet (fresh install)
-    OnnxEmbedder._gc_stale_files("/tmp/phoenix/gc_nonexistent_dir_zz", {"anything"})
+    OnnxEmbedder._gc_stale_files(os.path.join(tempfile.gettempdir(), "gc_nonexistent_dir_zz"), {"anything"})
 
 
 def test_nli_gc_uses_shared_helper(tmp_path):
     """NLI side uses the same _gc_stale_files policy — planted orphan dies, pinned survives."""
-    import sys
-    sys.path.insert(0, "/home/phoenix/limbic/..")
     from limbic.nli import LimbicNLI
     from limbic.model_pins import model_pin, NLI_MODEL_ID
     iso = str(tmp_path / "nli")

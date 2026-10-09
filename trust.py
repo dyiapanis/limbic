@@ -40,7 +40,7 @@ DEFAULT_PARAMS = {
     # Recall-confidence gate (no_confident_match abstention): if the best fact's
     # relevance (top cosine) is below this, recall() reports an abstention
     # instead of surfacing a near-miss. Calibrated 2026-10-10 on the live
-    # phoenix store (429 facts): answerable top-cosine 0.63-0.95,
+    # production store (429 facts): answerable top-cosine 0.63-0.95,
     # unanswerable 0.15-0.30 — 0.40 sits in a 0.33-wide gap.
     "recall_confidence_floor": {"value": 0.40, "min": 0.30, "max": 0.60},
     "interference_penalty": {"value": 0.20, "min": 0.02, "max": 0.25},
