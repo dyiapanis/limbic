@@ -121,6 +121,12 @@ class LimbicMemoryProvider(MemoryProvider):
         # Init embedder
         if not self._embedder:
             self._embedder = create_embedder(self._config)
+            # Warm the model NOW (one-time ~1s ONNX session load) so the first
+            # prefetch doesn't pay it on the dispatch path. Steady-state embed
+            # is ~17-19ms (measured 2026-10-10); the 1s was load, not inference.
+            # Fire-and-forget thread: initialize stays fast, first embed re-checks.
+            import threading
+            threading.Thread(target=self._warm_embedder, daemon=True).start()
             # Embedder-stamp check (update mechanism): compare the running
             # embedder's identity against the DB's record. A mismatch (plugin
             # updated to a different model/quantization without reindex) marks
@@ -635,6 +641,14 @@ class LimbicMemoryProvider(MemoryProvider):
             "status": "ok",
             "top_score": round(top, 4),
         }
+
+    def _warm_embedder(self) -> None:
+        """One-time ONNX session load off the dispatch path (see initialize)."""
+        try:
+            self._embedder.embed("limbic: warmup", is_query=True)
+            logger.info("limbic: embedder warmed (~1s ONNX load paid outside dispatch)")
+        except Exception as e:
+            logger.warning("limbic: embedder warmup failed (will load lazily on first embed): %s", e)
 
     def _search(self, query: str, user_id: str, limit: int = 20, session_id: str = "",
                 user_message: str = "") -> list[dict]:

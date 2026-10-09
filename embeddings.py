@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import threading
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -127,6 +128,7 @@ class OnnxEmbedder(LimbicEmbedder):
         self._cache_hits = 0
         self._cache_misses = 0
         self._cache_dir = cache_dir or self._default_cache_dir()
+        self._init_lock = threading.Lock()
 
     @staticmethod
     def _default_cache_dir() -> str:
@@ -137,7 +139,13 @@ class OnnxEmbedder(LimbicEmbedder):
         """Download and load the ONNX model on first use."""
         if self._session is not None:
             return
+        with self._init_lock:
+            if self._session is not None:  # re-check under lock (loader race)
+                return
 
+            self._load_model_locked()
+
+    def _load_model_locked(self):
         try:
             import onnxruntime as ort
             from tokenizers import Tokenizer
