@@ -455,9 +455,10 @@ The system ships with two ONNX models, both running in-process on CPU via onnxru
 - 1024 dimensions
 - 74 languages (including English, French, Chinese, Arabic, Greek)
 - ~570 MB model cache (int8-quantized ONNX, single self-contained file: model_int8.onnx)
-- Cache hygiene: at model-verification time, files in the cache directory that are not in the
-  pin manifest are deleted (stale orphans from a previous model or quantization are reclaimed
-  automatically; the database and Limbic state are never touched)
+- Cache hygiene: at every model load (each process start), files in the cache directory that
+  are not in the pin manifest are deleted — stale orphans left by a previous model or
+  quantization (e.g. a fp32 `model.onnx` + `model.onnx_data` pair from a 0.5.x install, ~2.1GB)
+  are reclaimed on the first start after upgrade; the database and Limbic state are never touched
 - Apache-2.0 license
 - ~10-15ms inference on CPU (ONNX runtime)
 - 8192 token max sequence (truncated to 512 for facts — sufficient for memory content)
@@ -825,9 +826,21 @@ STEP 3: Score, gate, and prime
     activation = sigmoid(hours_since_created, retrieval_count, t_half, k)
 
     if activation < 0.5:
-      # Silent — not injected. Silent facts simply mature; there is no
-      # read-time channel from a silent fact to a mature one.
-      continue
+      # Confidence rescue (0.6.1): a just-stored fact with activation < 0.5 but
+      # cosine >= recall_confidence_floor IS the correct answer for this query —
+      # it surfaces as active immediately. Without the rescue, stale matured
+      # facts with mediocre cosines keep the active gate non-empty, and the true
+      # best match starves in the silent pool (measured live: the best fact,
+      # cosine 0.534, sat silent behind 0.28-0.32 junk).
+      if emb_score >= recall_confidence_floor:
+          pass  # surface as active; composite computed below
+      else:
+          # Silent — not injected. Silent facts simply mature; there is no
+          # read-time channel from a silent fact to a mature one.
+          # (fallback pool: cosine >= relevance_floor kept for empty-gate turns)
+          if emb_score >= relevance_floor:
+              silent_facts.append(fact)
+          continue
 
     # Active fact — compute composite score
     # Temporal decay is applied as a WRITE operation (apply_decay) every turn
@@ -838,8 +851,19 @@ STEP 3: Score, gate, and prime
 
     composite = emb_score * (1.0 - trust_weight * (1.0 - effective_trust))
 
-STEP 4: Gating — relevance floor
+STEP 4: Gating — relevance floor + top-confidence guard
   gated = [f for f in scored if f.composite >= relevance_floor]
+
+  # Top-confidence guard (0.6.1): if even the best fact's RELEVANCE (raw cosine,
+  # not composite) is below recall_confidence_floor, the query is a near-miss —
+  # inject nothing rather than bias the turn with tangential facts. Gated on
+  # cosine, not composite: composite multiplies cosine by a trust damping factor
+  # (up to -20%), conflating "how relevant was the match" with "how much do we
+  # trust that fact" — natural queries about low-trust (new) facts would falsely
+  # abstain (measured: 5/10 natural probes abstained via composite, 0/10 via cosine).
+  top_relevance = max(f.relevance for f in scored) if scored else 0.0
+  if top_relevance < recall_confidence_floor:
+      return ""   # no injection this turn; per-fact relevance_floor still applies above
 
   # Fallback: if no active facts passed the gate, use high-relevance silent facts
   if not gated and silent_facts:
@@ -885,7 +909,9 @@ Where:
 
 **Relevance is a precondition, not a term.** The formula is multiplicative, so zero similarity yields zero composite regardless of trust. Trust can only damp a relevant fact (at most 20% at trust 0); it can never lift an irrelevant one. `activation` is not a scoring term — it gates injection only (see §5).
 
-**Silent-facts fallback:** If no active facts pass the relevance gate, high-relevance silent facts (activation < 0.5 but embedding_score >= floor) are returned sorted by embedding score. This prevents empty recall when all matching facts are still in the maturation period.
+**Silent-facts fallback:** If no active facts pass the relevance gate, high-relevance silent facts (activation < 0.5 but embedding_score >= floor) are returned sorted by embedding score. This prevents empty recall when all matching facts are still in the maturation period. The confidence rescue (STEP 3) narrows this fallback's job to the truly-marginal band: facts whose relevance clears the confidence floor never enter it.
+
+**Confidence-gated recall (tool contract):** the explicit `recall()` tool reports `{"status": "no_confident_match", "top_score": S}` when the best relevance falls below the floor — read-side metacognition. `prefetch()` shares the same top-relevance guard but returns an empty context block instead of a status field (the turn simply runs without memory). See "What the Agent Sees" for the agent-facing contract.
 
 **Over-fetch:** The search requests `limit * 5` results. Without this, a crowd of recent silent facts can dominate the top-K and starve recall of active facts that are further in vector distance but actually eligible for injection.
 
@@ -893,7 +919,7 @@ Where:
 
 | Component | Time |
 |---|---|
-| Embedding generation (bundled ONNX model, CPU) | ~5-10ms |
+| Embedding generation (bundled ONNX model, CPU) | ~17-19ms steady-state (measured 2026-10-10, production store); one-time ~1s ONNX session load paid at first load — moved off the dispatch path via a warm-up thread at initialization (daemon, fire-and-forget); `_init_lock` double-checked locking makes concurrent warm-up + first-embed safe (regression-tested, 3-thread) |
 | sqlite-vec KNN search (brute-force, linear in fact count) | ~1-2ms at ~1k facts |
 | FTS5 full-text search (BM25) | ~1-2ms |
 | Entity graph traversal (SQL JOIN on mentions) | ~0.5-1ms |
@@ -909,13 +935,13 @@ Where:
 
 | Facts | KNN search | Total prefetch |
 |---|---|---|
-| 100 | <1ms | ~8ms |
-| 1,000 | <2ms | ~10ms |
-| 5,000 | ~10ms | ~20ms |
-| 10,000 | ~20ms | ~30ms |
-| 100,000 | ~200ms | ~210ms |
+| 100 | <1ms | ~18-20ms |
+| 1,000 | <2ms | ~19-21ms |
+| 5,000 | ~10ms | ~27-29ms |
+| 10,000 | ~20ms | ~37-39ms |
+| 100,000 | ~200ms | ~217-219ms |
 
-**KNN search is a linear scan**, so cost grows with fact count; the 5,879-fact measurement (10.2ms, Section 4.1.1) sits where the curve predicts. Embedding generation is constant (~5-10ms). An ANN index is future work in sqlite-vec, and would change the shape of this table.
+**KNN search is a linear scan**, so cost grows with fact count; the 5,879-fact measurement (10.2ms, Section 4.1.1) sits where the curve predicts. Embedding generation is constant at ~17-19ms steady-state (int8 Arctic L, measured 2026-10-10 on the production store; earlier ~5-10ms estimates under-measured the 1024-dim model). One-time ~1s ONNX session load is paid at initialization via warm-up thread, not per-turn. An ANN index is future work in sqlite-vec, and would change the shape of this table.
 
 ### 5. Maturation — Activation Sigmoid (Amygdala)
 
