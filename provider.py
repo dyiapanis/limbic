@@ -614,9 +614,26 @@ class LimbicMemoryProvider(MemoryProvider):
             return {"error": "No user_id resolved", "results": [], "count": 0}
 
         results = self._search(query, uid, session_id=session_id or "")
+        if not results:
+            return {"results": [], "count": 0,
+                    "status": "no_confident_match", "top_score": 0.0}
+
+        # Recall-confidence gate (read-side metacognition): the best fact's
+        # composite score must clear the floor, else this is a near-miss —
+        # report abstention rather than a confident-sounding wrong answer.
+        trust = self._trust
+        if trust is None:
+            return {"error": "Limbic not initialised", "results": [], "count": 0}
+        conf_floor = trust.get("recall_confidence_floor")
+        top = max(float(r.get("composite_score", 0.0) or 0.0) for r in results)
+        if top < conf_floor:
+            return {"results": [], "count": 0, "status": "no_confident_match",
+                    "top_score": round(top, 4)}
         return {
             "results": [{"content": r["content"]} for r in results],
             "count": len(results),
+            "status": "ok",
+            "top_score": round(top, 4),
         }
 
     def _search(self, query: str, user_id: str, limit: int = 20, session_id: str = "",
