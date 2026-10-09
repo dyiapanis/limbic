@@ -300,8 +300,18 @@ Two tools:
 
 ```
 remember(content: str) → {"status": "stored"}
-recall(query: str) → {"results": [...], "count": N}
+recall(query: str) → {"results": [...], "count": N, "status": "ok", "top_score": S}
+recall(query: str) → {"results": [], "count": 0, "status": "no_confident_match", "top_score": S}
 ```
+
+**Recall-confidence gate (abstention):** when the best fact's composite score falls
+below the adaptive `recall_confidence_floor` (default 0.40), recall reports
+`no_confident_match` instead of surfacing a near-miss — read-side metacognition.
+The agent should treat an abstention as "memory has nothing on this," not as
+silence to paper over: answer from what you know, don't guess and don't
+attribute anything to memory. Calibration (live 429-fact store, 2026-10-10):
+answerable top-cosine 0.63–0.95 vs unanswerable 0.15–0.30 — the gate sits in the
+middle of a 0.33-wide separation.
 
 And a context block that appears before turns where memory is relevant:
 
