@@ -86,5 +86,9 @@ def _install_hermes_compat_shim():
 # runner nothing provides `agent`, and installing the shim first is what makes that import
 # resolve. (Locally agent is importable from a Hermes install, which is why this was invisible.)
 _install_hermes_compat_shim()
+import os as _os_dbg
+_shim_installed = "agent" in sys.modules and hasattr(sys.modules["agent"], "memory_provider")
+print(f"[conftest-debug] shim_installed={_shim_installed} sys.path={sys.path} "
+      f"agent_in_modules={'agent' in sys.modules}", file=sys.stderr)
 _alias_as_package()
 sys.path.insert(0, REPO_ROOT)
