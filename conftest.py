@@ -81,6 +81,10 @@ def _install_hermes_compat_shim():
     sys.modules["agent.memory_provider"] = mp
 
 
-_alias_as_package()
+# ORDER: shim BEFORE the package alias — the alias execs __init__.py as "limbic", which
+# takes the package branch and imports provider.py → agent.memory_provider. On a bare CI
+# runner nothing provides `agent`, and installing the shim first is what makes that import
+# resolve. (Locally agent is importable from a Hermes install, which is why this was invisible.)
 _install_hermes_compat_shim()
+_alias_as_package()
 sys.path.insert(0, REPO_ROOT)
