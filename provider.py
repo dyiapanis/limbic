@@ -980,13 +980,11 @@ class LimbicMemoryProvider(MemoryProvider):
     def recall_status(self) -> Optional[RecallStatus]:
         """Number of facts injected in the last prefetch, for the UI indicator.
 
-        Returns None when nothing was injected, so the indicator stays hidden
-        rather than rendering "0 memories" on a turn that legitimately had none.
+        Disabled (Demetri, 2026-10-10): the inline "🧠 limbic — recalled N memories"
+        status line is chat noise — always report None. Memory injection itself is
+        unaffected (facts still reach the prompt); only the indicator is muted.
         """
-        n = self._last_recall_count
-        if n <= 0:
-            return None
-        return RecallStatus(provider_label="limbic", count=n)
+        return None
 
     # ── Trust signals (Amygdala feedback) ──────────────────────────
 
