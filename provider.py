@@ -980,11 +980,16 @@ class LimbicMemoryProvider(MemoryProvider):
     def recall_status(self) -> Optional[RecallStatus]:
         """Number of facts injected in the last prefetch, for the UI indicator.
 
-        Disabled (Demetri, 2026-10-10): the inline "🧠 limbic — recalled N memories"
-        status line is chat noise — always report None. Memory injection itself is
-        unaffected (facts still reach the prompt); only the indicator is muted.
+        Controlled by ``recall_indicator`` (limbic.yaml, default false — the
+        "🧠 limbic — recalled N memories" chat line is off unless opted in;
+        Demetri 2026-10-10). Memory injection itself is unaffected.
         """
-        return None
+        if not self._config.get("recall_indicator", False):
+            return None
+        n = self._last_recall_count
+        if n <= 0:
+            return None
+        return RecallStatus(provider_label="limbic", count=n)
 
     # ── Trust signals (Amygdala feedback) ──────────────────────────
 
@@ -1670,6 +1675,11 @@ class LimbicMemoryProvider(MemoryProvider):
                 "key": "embedding_dims",
                 "description": "Embedding dimensionality. Must match the bundled model (1024).",
                 "default": 1024,
+            },
+            {
+                "key": "recall_indicator",
+                "description": "Emit an inline recall indicator line before replies when memory was injected. Default off.",
+                "default": False,
             },
             {
                 "key": "context_budget",

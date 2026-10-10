@@ -22,6 +22,10 @@ nlp:
   languages: [en]
 
 context_budget: 20
+
+# Chat recall indicator: emit an inline "🧠 limbic — recalled N memories" status line
+# before replies when memory was injected. Default off (chat noise); flip to true to enable.
+recall_indicator: false
 # NOTE: decay half-life and relevance_floor are ADAPTIVE (limbic_params.json,
 # managed by the trust engine). There is no static yaml knob for them.
 # Fragment gate (2026-09-07): remember() rejects content shorter than BOTH
