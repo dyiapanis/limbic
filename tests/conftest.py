@@ -31,7 +31,8 @@ def _install_limbic_package():
     except ImportError:
         pass
     spec = importlib.util.spec_from_file_location(
-        "limbic", os.path.join(REPO_ROOT, "__init__.py"))
+        "limbic", os.path.join(REPO_ROOT, "__init__.py"),
+        submodule_search_locations=[REPO_ROOT])
     mod = importlib.util.module_from_spec(spec)
     sys.modules["limbic"] = mod
     spec.loader.exec_module(mod)
