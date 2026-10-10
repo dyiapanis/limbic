@@ -1,5 +1,5 @@
 name: limbic
-version: 0.6.1
+version: 0.6.2
 description: "Self-organising memory system. Opaque, adaptive, self-contained. Modelled on the biological limbic system."
 author: "D Yiapanis"
 kind: exclusive
