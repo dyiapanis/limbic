@@ -16,6 +16,7 @@ Everything inside is self-organising.
 from __future__ import annotations
 
 import logging
+import sys
 
 logger = logging.getLogger(__name__)
 
@@ -25,12 +26,14 @@ logger = logging.getLogger(__name__)
 # and relative imports crash on that import. In that walk the actual ``limbic``
 # package is aliased by conftest, so the re-exports skip harmlessly here.
 _NONPACKAGE_IMPORT = __name__ != "limbic"  # pytest's walk imports by dirname
+_PROVIDER_CLASS = None  # set when package-imported (eager re-exports below)
 if not _NONPACKAGE_IMPORT:
     from .embeddings import LimbicEmbedder, OnnxEmbedder
     from .nli import LimbicNLI
     from .storage import LimbicStorage
     from .trust import TrustEngine
     from .provider import LimbicMemoryProvider
+    _PROVIDER_CLASS = LimbicMemoryProvider
     from .tools import REMEMBER_SCHEMA, RECALL_SCHEMA, handle_tool_call
 
 
@@ -44,6 +47,20 @@ def register(ctx):
     dispatched by the MemoryManager — no general-plugin hook registration
     is required.
     """
-    provider = LimbicMemoryProvider()
+    cls = globals().get("_PROVIDER_CLASS")
+    if cls is None:
+        # Standalone file-load (hermes capability probe): the module name isn't
+        # "limbic", so eager relative re-exports were skipped. Import provider.py
+        # by path; sibling files resolve via the repo/package context.
+        import importlib.util, os
+        _pv = os.path.join(os.path.dirname(__file__), "provider.py")
+        _spec = importlib.util.spec_from_file_location(
+            "limbic.provider", _pv, submodule_search_locations=[os.path.dirname(_pv)])
+        _prov = importlib.util.module_from_spec(_spec)
+        sys.modules.setdefault("limbic.provider", _prov)
+        _spec.loader.exec_module(_prov)
+        cls = _prov.LimbicMemoryProvider
+        globals()["_PROVIDER_CLASS"] = cls
+    provider = cls()
     ctx.register_memory_provider(provider)
     logger.info("limbic memory provider registered")
