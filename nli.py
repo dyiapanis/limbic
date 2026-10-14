@@ -37,6 +37,8 @@ import logging
 import os
 from typing import Optional
 
+from .embeddings import OnnxEmbedder
+
 logger = logging.getLogger(__name__)
 
 # Model metadata — used for download cache path and first-use logging
@@ -120,7 +122,7 @@ class LimbicNLI:
         """Download ONNX model files from HuggingFace at a PINNED revision with sha256 checks."""
         os.makedirs(self._cache_dir, exist_ok=True)
 
-        from .embeddings import _urlretrieve_atomic, OnnxEmbedder
+        from .embeddings import _urlretrieve_atomic
         from .model_pins import model_pin, is_sha1_blob
         pin = model_pin(NLI_MODEL_ID)
         rev = pin["revision"]

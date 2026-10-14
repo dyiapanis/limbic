@@ -58,7 +58,7 @@ class LimbicEmbedder:
         pass
 
 
-def _urlretrieve_atomic(url: str, dest: str, min_bytes: int = 1024,
+def _urlretrieve_atomic(url: str, dest: str, min_bytes: int = 64,
                         expect_sha256: str | None = None):
     """Download to a temp file, verify, then rename into place.
 
