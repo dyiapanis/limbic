@@ -49,14 +49,22 @@ def register(ctx):
     """
     cls = globals().get("_PROVIDER_CLASS")
     if cls is None:
-        # Standalone file-load (hermes capability probe): the module name isn't
-        # "limbic", so eager relative re-exports were skipped. Import provider.py
-        # by path; sibling files resolve via the repo/package context.
-        import importlib.util, os
-        _pv = os.path.join(os.path.dirname(__file__), "provider.py")
-        _spec = importlib.util.spec_from_file_location(
-            "limbic.provider", _pv, submodule_search_locations=[os.path.dirname(_pv)])
+        # Standalone file-load (hermes capability probe / synthetic-namespace
+        # import): the module name isn't "limbic", so eager relative re-exports
+        # were skipped. Import provider.py by path under the real package name;
+        # a 'limbic' package shell makes sibling relative imports resolve
+        # (without it, __package__ stays "limbic.provider" and `.embeddings`
+        # mis-resolves to the nonexistent limbic.provider.embeddings).
+        import importlib.util, os, types
+        _pkg_dir = os.path.dirname(__file__)
+        if "limbic" not in sys.modules:
+            _shell = types.ModuleType("limbic")
+            _shell.__path__ = [_pkg_dir]
+            sys.modules["limbic"] = _shell
+        _pv = os.path.join(_pkg_dir, "provider.py")
+        _spec = importlib.util.spec_from_file_location("limbic.provider", _pv)
         _prov = importlib.util.module_from_spec(_spec)
+        _prov.__package__ = "limbic"
         sys.modules.setdefault("limbic.provider", _prov)
         _spec.loader.exec_module(_prov)
         cls = _prov.LimbicMemoryProvider
