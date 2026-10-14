@@ -37,6 +37,8 @@ import logging
 import os
 from typing import Optional
 
+from .embeddings import OnnxEmbedder  # module-level: _ensure_model/_download_model reference this name
+
 logger = logging.getLogger(__name__)
 
 # Model metadata — used for download cache path and first-use logging
