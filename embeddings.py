@@ -67,8 +67,16 @@ def _urlretrieve_atomic(url: str, dest: str, min_bytes: int = 1024,
     - a concurrent downloader never sees a half-written cache entry
     - a truncated-but-"complete" response (empty/tiny file) is rejected
     - content that doesn't match the pinned sha256 is rejected (when given)
+
+    ``min_bytes`` is a torn-download heuristic, not a hard floor: files pinned
+    by plain git-blob sha1 (small JSONs — some tokenizer_config.json are <1KB)
+    are legitimately tiny AND sha-verified, so a pinned sha implies the caller
+    already guarantees integrity. The size guard still fires for unpinned
+    downloads.
     """
     import urllib.request
+    if expect_sha256 is not None:
+        min_bytes = 0
     # Rule-12 hardening (unattended runs fail cleanly, never hang): no global
     # socket timeout means a stalled HuggingFace connection hangs remember()
     # indefinitely under cron/gateway. 60s connect/read stall bound.
