@@ -12,8 +12,12 @@ Language handling:
     (no word lists, no hardcoded language pairs).
   - Unconfigured-language content falls back to the first loaded pipeline.
 
-The plugin ships with no spaCy model bundled; models auto-download on
-first use (~14.5MB each for _sm models).
+The plugin ships with no spaCy model bundled and DOES NOT auto-download
+(runtime installs would bypass the dependency manager). Install the model
+once per environment: `python -m spacy download en_core_web_sm` (~14.5MB).
+Until then, entity extraction is disabled — reflected in provider status
+(`entity_extraction: disabled`) and repairable post-hoc via the
+`entities-backfill` CLI.
 """
 from __future__ import annotations
 
@@ -82,6 +86,7 @@ class EntityExtractor:
         self._known_patterns = known_patterns or []
 
         languages = languages or ["en"]
+        self._languages = list(languages)
 
         for lang in languages:
             model = self.MODEL_MAP.get(lang)

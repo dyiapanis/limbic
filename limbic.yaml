@@ -17,7 +17,11 @@ nli:
   model: MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli
 
 # Entity extraction languages.
-# Default is English only; add languages as needed (spaCy models download on first use).
+# Default is English only; add languages as needed.
+# NOTE: spaCy models do NOT auto-download — install once per environment:
+#   python -m spacy download en_core_web_sm
+# Until installed, status() reports entity_extraction: disabled; backfill via
+# `hermes limbic entities-backfill` after installing.
 nlp:
   languages: [en]
 

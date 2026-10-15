@@ -9,6 +9,7 @@ Available commands:
     seed        Inject a fact without conversation
     reindex     Re-embed all facts with the bundled model
     fts-rebuild Rebuild the FTS5 full-text index
+    entities-backfill  Populate entities/mentions for facts written while NLP was disabled
     status      Show provider health and config summary
     languages   Show or set entity-extraction languages (e.g. en,fr,el)
 """
@@ -213,6 +214,59 @@ def cmd_fts_rebuild(args):
     print("FTS index rebuilt.")
 
 
+def cmd_entities_backfill(args):
+    """Backfill entities/mentions for facts written while extraction was disabled (issue #18).
+
+    Idempotent: store_entities uses INSERT OR IGNORE + content-hash ids, so re-runs
+    add nothing. Refuses when the spaCy pipeline is unavailable — reports the fix
+    instead of pretending.
+    """
+    provider = _get_provider()
+    hermes_home = _resolve_hermes_home(args)
+    agent_identity = _resolve_agent_identity()
+    provider.initialize(session_id="cli-entities-backfill", hermes_home=hermes_home, agent_identity=agent_identity)
+
+    storage = provider._storage
+    if not storage:
+        print("ERROR: storage not initialised")
+        sys.exit(1)
+    extractor = provider._entity_extractor
+    if not extractor or not extractor.available:
+        print("ERROR: entity extraction unavailable — spaCy model not installed. Fix:")
+        print("  " + sys.executable + " -m spacy download en_core_web_sm")
+        sys.exit(2)
+
+    def _counts():
+        # Direct SQL: entities/mentions table sizes (SQLiteStorage owns the schema)
+        try:
+            e = storage._db.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+            m = storage._db.execute("SELECT COUNT(*) FROM mentions").fetchone()[0]
+            return e, m
+        except Exception:
+            return (0, 0)
+
+    users = storage.facts_per_user() or []
+    scanned = new_e = new_m = 0
+    for u in users:
+        user_id = u.get("user_id", "unknown")
+        exported = storage.export_user(user_id)
+        facts = exported.get("facts", []) if isinstance(exported, dict) else []
+        for f in facts:
+            fid, content = f.get("fact_id"), f.get("content")
+            if not fid or not content:
+                continue
+            scanned += 1
+            entities = extractor.extract(content)
+            if not entities:
+                continue
+            before = _counts()
+            storage.store_entities(fid, entities)
+            after = _counts()
+            new_e += max(0, after[0] - before[0])
+            new_m += max(0, after[1] - before[1])
+    print(f"OK: scanned {scanned} facts — new entities {new_e}, new mentions {new_m}")
+
+
 def cmd_status(args):
     """Show provider health and config summary."""
     provider = _get_provider()
@@ -233,6 +287,10 @@ def cmd_status(args):
         "total_facts": storage.count() if storage else 0,
         "embedding": config.get("embedding", {}),
         "context_budget": config.get("context_budget", 20),
+        "entity_extraction": {
+            "enabled": bool(provider._entity_extractor and provider._entity_extractor.available),
+            "languages": getattr(provider._entity_extractor, "_languages", None),
+        },
     }
     print(json.dumps(status, indent=2, default=str))
 
@@ -328,6 +386,10 @@ def register_cli(subparser) -> None:
     # fts-rebuild
     p_fts = subs.add_parser("fts-rebuild", help="Rebuild the FTS5 full-text index")
     p_fts.set_defaults(func=cmd_fts_rebuild)
+
+    # entities-backfill (issue #18)
+    p_eb = subs.add_parser("entities-backfill", help="Populate entities/mentions for facts written while NLP was disabled")
+    p_eb.set_defaults(func=cmd_entities_backfill)
 
     # status
     p_status = subs.add_parser("status", help="Show provider health and config")

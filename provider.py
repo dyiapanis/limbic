@@ -1422,6 +1422,10 @@ class LimbicMemoryProvider(MemoryProvider):
                     "atrophy_swept": self._atrophy_swept_count,
                     "embedder": self._embedder_stamp_text(),
                     "stale_embedder": self._embedder_stale,
+                    "entity_extraction": {
+                        "enabled": bool(self._entity_extractor and self._entity_extractor.available),
+                        "languages": getattr(self._entity_extractor, "_languages", None),
+                    },
                 }
             else:
                 # Aggregate stats across all users
@@ -1458,6 +1462,10 @@ class LimbicMemoryProvider(MemoryProvider):
                     "users": per_user,
                     "embedder": self._embedder_stamp_text(),
                     "stale_embedder": self._embedder_stale,
+                    "entity_extraction": {
+                        "enabled": bool(self._entity_extractor and self._entity_extractor.available),
+                        "languages": getattr(self._entity_extractor, "_languages", None),
+                    },
                     "telemetry": {
                         "prefetch_calls": prefetch_count,
                         "prefetch_avg_ms": prefetch_avg,
