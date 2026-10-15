@@ -190,10 +190,6 @@ one identity file in the stack.
 
 ## Operator Functions
 
----
-
-## Operator Functions
-
 ```
 forget(user_id)          — right to be forgotten
 export(user_id)          — GDPR-style data export
