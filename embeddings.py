@@ -89,7 +89,15 @@ def _urlretrieve_atomic(url: str, dest: str, min_bytes: int = 1024,
     # ENOENT at rename time (seen live 2026-10-07 during the int8 rollout).
     tmp = f"{dest}.{os.getpid()}.part"
     try:
-        urllib.request.urlretrieve(url, tmp)
+        def _hook(blocks, block_size, total):
+            if total > 0:
+                pct = min(100, blocks * block_size * 100 // total)
+                mb_done = blocks * block_size // 1024 // 1024
+                mb_total = total // 1024 // 1024
+                print(f"\r  {os.path.basename(dest)} {pct}% ({mb_done}MB/{mb_total}MB)", end="", flush=True)
+                if pct >= 100:
+                    print()
+        urllib.request.urlretrieve(url, tmp, reporthook=_hook)
         if os.path.exists(tmp) and os.path.getsize(tmp) < min_bytes:
             raise RuntimeError(f"download too small ({os.path.getsize(tmp)} bytes) — refusing to cache")
         if expect_sha256:
