@@ -324,11 +324,55 @@ def cmd_languages(args):
         provider = _get_provider()
         provider.save_config({"nlp_languages": ",".join(langs)}, hermes_home)
         print(f"Saved nlp.languages: {', '.join(langs)} -> {config_path}")
-        print("spaCy models download automatically on next restart (first use per language, ~14.5MB each).")
-    else:
-        print(f"Configured: {', '.join(_current())}")
-        print(f"Available: {', '.join(sorted(EntityExtractor.MODEL_MAP))}")
-        print("Set with: hermes limbic languages --set en,fr,el")
+        # auto-install models for the selected languages
+        import subprocess
+        for l in langs:
+            model = EntityExtractor.MODEL_MAP[l]
+            print(f"Installing {model} ...")
+            subprocess.run([sys.executable, "-m", "spacy", "download", model], check=False)
+        return
+    # show: list available with plain names, mark selected
+    current = set(_current())
+    print(f"Configured: {', '.join(_current())}")
+    print("Available:")
+    for code in sorted(EntityExtractor.MODEL_MAP):
+        mark = " *" if code in current else "  "
+        print(f"{mark} {code:4s}  {EntityExtractor.MODEL_MAP[code]}")
+    print("\nSet with: hermes limbic languages --set en,it  (then models install automatically)")
+
+
+def cmd_setup(args):
+    print("Setting up Limbic — downloading models with progress:\n")
+    from .embeddings import OnnxEmbedder
+    from .nli import LimbicNLI
+    print("[1/3] Embedding model (~570MB)...")
+    OnnxEmbedder()
+    print("  ✓ embedding ready")
+    print("[2/3] NLI model (~430MB)...")
+    LimbicNLI()
+    print("  ✓ NLI ready")
+    print("[3/3] Entity models...")
+    from .entities import EntityExtractor
+    import subprocess
+    langs = ["en"]
+    try:
+        import os, yaml
+        cfg_path = os.path.join(_resolve_hermes_home(args), "limbic.yaml")
+        if os.path.exists(cfg_path):
+            with open(cfg_path) as f:
+                cfg = yaml.safe_load(f) or {}
+            langs = cfg.get("nlp", {}).get("languages", ["en"])
+            if isinstance(langs, str):
+                langs = [l.strip() for l in langs.split(",")]
+    except Exception:
+        pass
+    for l in langs:
+        model = EntityExtractor.MODEL_MAP.get(l, "")
+        if not model:
+            continue
+        print(f"  {l} -> {model} ...")
+        subprocess.run([sys.executable, "-m", "spacy", "download", model], check=False)
+    print("\n✓ Setup complete. Run `hermes limbic status` to verify.")
 
 
 # ── Argparse registration ──────────────────────────────────────────
@@ -399,3 +443,7 @@ def register_cli(subparser) -> None:
     p_lang = subs.add_parser("languages", help="Show or set entity-extraction languages")
     p_lang.add_argument("--set", help="Comma-separated language codes (e.g. en,fr,el)")
     p_lang.set_defaults(func=cmd_languages)
+
+    # setup — one-shot install with progress: HF models + spacy models
+    p_setup = subs.add_parser("setup", help="Download all models with progress")
+    p_setup.set_defaults(func=cmd_setup)
