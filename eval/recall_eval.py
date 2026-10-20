@@ -182,6 +182,99 @@ QUERIES = [
     ("hobby", "how are the photographs developed at home?", [8, 1]),
 ]
 
+# Contested mode: dense domains (15 facts each) with paraphrase queries whose
+# expected facts must out-rank same-domain distractors — top-5 boundaries are
+# genuinely contested here, unlike the well-separated base corpus.
+CORPUS_CONTESTED = {
+    "colleagues": [
+        "Priya mentors the two graduate analysts and reviews their SQL every Friday",
+        "Marcus keeps the vendor negotiation notes in a locked drawer and distrusts email",
+        "Dana from the Melbourne office owns the analytics dashboard nobody else can edit",
+        "Priya plays badminton on Thursday evenings with the graduate analysts",
+        "Marcus brings his rescue greyhound to the office on slow Fridays",
+        "Dana's dashboard migration to the new schema is blocked on her annual leave",
+        "The graduate analysts wrote a style guide for SQL that Priya endorsed",
+        "Marcus negotiated the printer lease down by a third last spring",
+        "Dana runs the Melbourne stand-up at nine, an hour before ours",
+        "Priya's team retro rule: no metrics, only stories, half an hour",
+        "Marcus keeps a jar of liquorice sweets that everyone else pretends not to touch",
+        "Dana's leave spans the last two weeks of the year every year",
+        "The graduate analysts rotate the on-call pager on a fortnightly cycle",
+        "Priya insisted the on-call schedule respect the analysts' coursework deadlines",
+        "Marcus's greyhound is called Biscuit and sleeps under the reception desk",
+    ],
+    "recipes": [
+        "The no-knead bread needs an overnight prove in the ceramic bowl with the lid",
+        "Lentil bolognese gets its depth from soy sauce and a parmesan rind, not meat",
+        "The overnight bread dough is folded once after twenty minutes, never kneaded",
+        "Lentil bolognese was chosen because it freezes flat in bags for week lunches",
+        "Granola bakes at a low temperature twice, with a stir in between, to keep clusters",
+        "The granola recipe came from the corner bakery owner after a long chat",
+        "Flat-freeze bags of sauce are labelled with the month in marker pen",
+        "The pantry moth incident forced a full flour re-buy and sealed jars everywhere",
+        "Every soup night starts from the same soffritto base in the big yellow pot",
+        "The yellow pot was a wedding gift and never goes in the dishwasher",
+        "Kimchi batches are started on the new moon because the ferment window suits weekends",
+        "The pantry jars are labelled by grain, not by purchase date",
+        "Soffritto night doubles as soup night and never coincides with bake night",
+        "The bakery granola clusters survive only if the tray cools untouched",
+        "A ferment jar lives on the top shelf, away from the stove heat",
+    ],
+    "trips": [
+        "The overnight ferry to the island had reclining seats and a broken vending machine",
+        "Island mornings were for the cliff path walk before the day-trippers arrived",
+        "The ferry ticket was cheap because it left at five in the morning",
+        "On the island we ate at the family taverna twice and never saw a menu",
+        "The cliff path walk passes a ruined chapel with a lemon tree behind it",
+        "The mountain hut trip involved carrying water because the spring was dry",
+        "At the mountain hut we played cards by head-torch after the generator cut out",
+        "The dry spring meant each person carried four litres up the scree",
+        "The taverna family gave us a jar of their own thyme honey at the end",
+        "Island taverna nights ended with the owner's rose liqueur, never a bill",
+        "The ruined chapel lemon tree was heavy with fruit even that late in the season",
+        "The generator at the hut ran only three hours each evening",
+        "Cards by head-torch became the trip's longest-remembered joke about cheating",
+        "The scree section took ninety minutes and two rest stops with the water weight",
+        "Rose liqueur tastes better after the second thyme-honey spoonful, we decided",
+    ],
+    "devices": [
+        "The smart thermostat learns the morning schedule and pre-heats by half an hour",
+        "Thermostat pre-heating made the winter bill higher, not lower, the first month",
+        "The robot vacuum gets tangled on the hallway rug every single run without fail",
+        "The vacuum's cliff sensors were taped over once to clean the sunken lounge floor",
+        "Taping the sensors voided something, probably, but the lounge floor got clean",
+        "The hallway rug now has a rubber backing that seems to reduce the tangles",
+        "The doorbell camera records only the top of visitors' heads because of its angle",
+        "The doorbell was mounted before the new step was poured, hence the head-top angle",
+        "The new front step is one brick higher than the old one",
+        "The thermostat's learning can be reset by holding both dials for ten seconds",
+        "The smart meter display lives face-down in a drawer because the pulsing light",
+        "The meter face-down trick saves the bedroom wall from the blue pulse at night",
+        "The vacuum dock is behind the sofa so it can't be seen from the kitchen",
+        "The camera angle issue was reported to the installer who never came back",
+        "Both dials for ten seconds also clears the thermostat's holiday mode",
+    ],
+}
+
+QUERIES_CONTESTED = [
+    ("colleagues", "who works with the junior data staff every week?", [0, 3, 6]),
+    ("colleagues", "what is Marcus's dog situation at the office?", [4, 14]),
+    ("colleagues", "how is Dana blocked on the schema work?", [5, 11]),
+    ("colleagues", "what did the analysts write that got Priya's backing?", [6, 12]),
+    ("recipes", "how is the bread dough handled before the overnight rise?", [0, 2]),
+    ("recipes", "why do we make the lentil sauce in big batches?", [3, 6]),
+    ("recipes", "what did the moth problem change in the kitchen storage?", [7, 11]),
+    ("recipes", "what is the rule about the granola tray after baking?", [4, 13]),
+    ("trips", "what was the morning routine on the island?", [1, 4]),
+    ("trips", "how did the mountain water situation change the climb?", [6, 8, 13]),
+    ("trips", "what happened at the hut when the power stopped?", [6, 11]),
+    ("trips", "how did the taverna meals end?", [8, 9, 14]),
+    ("devices", "why does the thermostat warm up early?", [0, 1]),
+    ("devices", "what is the vacuum's recurring problem and the attempted fix?", [2, 4]),
+    ("devices", "why does the doorbell only see heads?", [6, 7, 8]),
+    ("devices", "how is the flashing meter handled at night?", [10, 11]),
+]
+
 
 def build_home() -> str:
     base = os.environ.get("TMPDIR") or tempfile.gettempdir()
@@ -200,6 +293,8 @@ def main() -> int:
     home = _arg("--home", "") or build_home()
     passes = int(_arg("--passes", "2"))
     boost = float(_arg("--boost", "0.0"))
+    corpus, queries = ((CORPUS_CONTESTED, QUERIES_CONTESTED)
+                       if "--contested" in sys.argv else (CORPUS, QUERIES))
     if not os.path.isdir(home):
         os.makedirs(home, exist_ok=True)
     if boost > 0:
@@ -227,7 +322,7 @@ def main() -> int:
     # Ingest — the REAL write path (embedder, trust, NLI bands, decay stamps).
     t0 = time.time()
     facts: list[tuple[str, str]] = []  # (content, domain)
-    for domain, items in CORPUS.items():
+    for domain, items in corpus.items():
         for content in items:
             res = p.remember(content, user_id=UID)
             if res.get("error"):
@@ -245,8 +340,8 @@ def main() -> int:
         abstained = 0
         gated_hits = 0
         gated_total = 0
-        for domain, query, expected_idx in QUERIES:
-            expected_contents = {CORPUS[domain][i] for i in expected_idx}
+        for domain, query, expected_idx in queries:
+            expected_contents = {corpus[domain][i] for i in expected_idx}
             # prefetch = the real user flow: counts + (boost>0) link formation
             p.prefetch(query, session_id="eval-session")
             raw = p._search(query, UID, limit=K)
@@ -271,9 +366,9 @@ def main() -> int:
         result = {
             "pass": pass_i,
             "n_facts": len(facts),
-            "n_queries": len(QUERIES),
+            "n_queries": len(queries),
             "raw_recall@5": round(raw_recall, 4),
-            "hit@1": round(hit1 / len(QUERIES), 4),
+            "hit@1": round(hit1 / len(queries), 4),
             "gated_recall": round(gated_hits / gated_total, 4) if gated_total else 0.0,
             "abstained": abstained,
         }
