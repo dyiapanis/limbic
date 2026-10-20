@@ -192,11 +192,21 @@ def build_home() -> str:
     return home
 
 
+def _arg(name: str, default: str) -> str:
+    return sys.argv[sys.argv.index(name) + 1] if name in sys.argv else default
+
+
 def main() -> int:
-    home = sys.argv[sys.argv.index("--home") + 1] if "--home" in sys.argv else build_home()
+    home = _arg("--home", "") or build_home()
+    passes = int(_arg("--passes", "2"))
+    boost = float(_arg("--boost", "0.0"))
     if not os.path.isdir(home):
         os.makedirs(home, exist_ok=True)
-    print(f"eval home: {home}")
+    if boost > 0:
+        # Feature config for this run only — scratch home, never the fleet's.
+        with open(os.path.join(home, "limbic.yaml"), "w") as f:
+            f.write(f"associative_link_boost: {boost}\n")
+    print(f"eval home: {home}  passes={passes} boost={boost}")
 
     # The gateway runtime is isolated-mode: PYTHONPATH breaks its env
     # resolution. Insert paths in-process, exactly like the launcher does.
@@ -226,50 +236,55 @@ def main() -> int:
             facts.append((content, domain))
     print(f"ingested {len(facts)} facts ({time.time() - t0:.1f}s)")
 
-    # Query — both surfaces.
-    per_domain: dict[str, list[float]] = {}
-    hit1 = 0
-    abstained = 0
-    gated_hits = 0
-    gated_total = 0
-    for domain, query, expected_idx in QUERIES:
-        expected_contents = {CORPUS[domain][i] for i in expected_idx}
-        raw = p._search(query, UID, limit=K)
-        got_contents = [r.get("content") for r in raw]
-        raw_hits = sum(1 for c in got_contents if c in expected_contents)
-        rec = raw_hits / len(expected_contents)
-        per_domain.setdefault(domain, []).append(rec)
-        if got_contents and got_contents[0] in expected_contents:
-            hit1 += 1
+    # Query — both surfaces, N passes. Pass 1 exercises the real retrieval
+    # chokepoint (prefetch: retrieval_count + edge formation); later passes
+    # measure whether the links formed by earlier passes help recall.
+    for pass_i in range(1, passes + 1):
+        per_domain: dict[str, list[float]] = {}
+        hit1 = 0
+        abstained = 0
+        gated_hits = 0
+        gated_total = 0
+        for domain, query, expected_idx in QUERIES:
+            expected_contents = {CORPUS[domain][i] for i in expected_idx}
+            # prefetch = the real user flow: counts + (boost>0) link formation
+            p.prefetch(query, session_id="eval-session")
+            raw = p._search(query, UID, limit=K)
+            got_contents = [r.get("content") for r in raw]
+            raw_hits = sum(1 for c in got_contents if c in expected_contents)
+            rec = raw_hits / len(expected_contents)
+            per_domain.setdefault(domain, []).append(rec)
+            if got_contents and got_contents[0] in expected_contents:
+                hit1 += 1
 
-        gated = p.recall(query, session_id="eval-session")
-        if gated.get("status") == "no_confident_match":
-            abstained += 1
-        else:
-            g_contents = [r["content"] for r in gated.get("results", [])]
-            g_hits = sum(1 for c in g_contents if c in expected_contents)
-            gated_hits += g_hits
-            gated_total += len(expected_contents)
+            gated = p.recall(query, session_id="eval-session")
+            if gated.get("status") == "no_confident_match":
+                abstained += 1
+            else:
+                g_contents = [r["content"] for r in gated.get("results", [])]
+                g_hits = sum(1 for c in g_contents if c in expected_contents)
+                gated_hits += g_hits
+                gated_total += len(expected_contents)
 
-    raw_recall = sum(sum(v) / len(v) for v in per_domain.values()) / len(per_domain)
-    macro = {d: round(sum(v) / len(v), 4) for d, v in per_domain.items()}
-    result = {
-        "n_facts": len(facts),
-        "n_queries": len(QUERIES),
-        "raw_recall@5": round(raw_recall, 4),
-        "hit@1": round(hit1 / len(QUERIES), 4),
-        "gated_recall": round(gated_hits / gated_total, 4) if gated_total else 0.0,
-        "abstained": abstained,
-    }
+        raw_recall = sum(sum(v) / len(v) for v in per_domain.values()) / len(per_domain)
+        macro = {d: round(sum(v) / len(v), 4) for d, v in per_domain.items()}
+        result = {
+            "pass": pass_i,
+            "n_facts": len(facts),
+            "n_queries": len(QUERIES),
+            "raw_recall@5": round(raw_recall, 4),
+            "hit@1": round(hit1 / len(QUERIES), 4),
+            "gated_recall": round(gated_hits / gated_total, 4) if gated_total else 0.0,
+            "abstained": abstained,
+        }
 
-    print("\nper-domain raw recall@5:")
-    for d, v in sorted(macro.items()):
-        print(f"  {d:<10} {v}")
-    print()
-    print(f"raw recall@5 (macro): {result['raw_recall@5']}")
-    print(f"hit@1:                 {result['hit@1']}")
-    print(f"gated recall:          {result['gated_recall']}  ({abstained} abstained)")
-    print(f"EVAL_JSON={json.dumps(result)}")
+        print(f"\n── pass {pass_i}/{passes} per-domain raw recall@5:")
+        for d, v in sorted(macro.items()):
+            print(f"  {d:<10} {v}")
+        print(f"raw recall@5 (macro): {result['raw_recall@5']}")
+        print(f"hit@1:                 {result['hit@1']}")
+        print(f"gated recall:          {result['gated_recall']}  ({abstained} abstained)")
+        print(f"EVAL_JSON={json.dumps(result)}")
     return 0
 
 
