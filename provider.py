@@ -120,6 +120,14 @@ class LimbicMemoryProvider(MemoryProvider):
 
         # Init embedder
         if not self._embedder:
+            # First-use UX: surface download before heavy work — check if HF cache empty
+            try:
+                from pathlib import Path as _P
+                from .embeddings import OnnxEmbedder as _E
+                if not any(_P(_E._default_cache_dir()).iterdir()) if _P(_E._default_cache_dir()).exists() else True:
+                    print("Downloading models (~1GB)… first use, one-time with progress:")
+            except Exception:
+                pass
             self._embedder = create_embedder(self._config)
             # Warm the model NOW (one-time ~1s ONNX session load) so the first
             # prefetch doesn't pay it on the dispatch path. Steady-state embed
