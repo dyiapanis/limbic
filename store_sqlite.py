@@ -456,6 +456,23 @@ class SQLiteStorage(LimbicStorage):
         """)
         db.execute("CREATE INDEX IF NOT EXISTS idx_contradictions_open ON contradictions(resolved_at)")
 
+        # Associative links — co-retrieval reinforcement. Canonical (a<b)
+        # pair ordering: one row per unordered pair, no reverse duplicates.
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS fact_edges (
+                fact_a          INTEGER NOT NULL,
+                fact_b          INTEGER NOT NULL,
+                user_id         TEXT NOT NULL,
+                weight          REAL NOT NULL,
+                created_at      TEXT NOT NULL,
+                last_reinforced TEXT NOT NULL,
+                PRIMARY KEY (fact_a, fact_b, user_id),
+                FOREIGN KEY (fact_a) REFERENCES facts(fact_id) ON DELETE CASCADE,
+                FOREIGN KEY (fact_b) REFERENCES facts(fact_id) ON DELETE CASCADE
+            )
+        """)
+        db.execute("CREATE INDEX IF NOT EXISTS idx_fact_edges_user_a ON fact_edges(user_id, fact_a)")
+
         db.execute("""
             CREATE TABLE IF NOT EXISTS mentions (
                 fact_id INTEGER NOT NULL,
@@ -918,6 +935,94 @@ class SQLiteStorage(LimbicStorage):
             )
             return cur.rowcount or 0
         return self._write_txn(_txn)
+
+    # ── Associative links (co-retrieval reinforcement) ──────────────
+
+    _EDGE_CAP = 20.0
+    _EDGE_HALF_LIFE_DAYS = 30.0
+    _EDGE_PRUNE_FLOOR = 0.05
+
+    @staticmethod
+    def _edge_decay_factor(last_reinforced_iso: str) -> float:
+        """Effective-weight decay: halves per _EDGE_HALF_LIFE_DAYS since the
+        last reinforcement. Computed at read time — no sweep job exists."""
+        try:
+            last = datetime.fromisoformat(str(last_reinforced_iso).replace("Z", "+00:00"))
+            now = datetime.now(timezone.utc)
+            days = max(0.0, (now - last).total_seconds() / 86400.0)
+            return 0.5 ** (days / SQLiteStorage._EDGE_HALF_LIFE_DAYS)
+        except (ValueError, TypeError):
+            return 1.0
+
+    def reinforce_edges(self, fact_ids: list[int], user_id: str) -> None:
+        """Pairwise link strengthening among co-retrieved facts.
+
+        Upsert-or-increment with cap; decay is folded in on every touch (a
+        stale link never accumulates past its effective weight). Rows whose
+        effective weight has decayed below the prune floor are deleted on
+        touch — the atrophy is lazy, carried by usage, not a sweep.
+        # ponytail: prune-on-touch, not a sweep — add a sweep if dormant-row
+        # volume ever matters (it is bounded by real co-retrieval patterns).
+        """
+        ids = sorted({int(i) for i in fact_ids if i is not None})
+        if len(ids) < 2:
+            return
+        now = _now_iso()
+        pairs = [(ids[i], ids[j]) for i in range(len(ids)) for j in range(i + 1, len(ids))]
+
+        def _txn():
+            for a, b in pairs:  # canonical (a < b) — reverse pairs cannot exist
+                row = self._db.execute(
+                    "SELECT weight, last_reinforced FROM fact_edges "
+                    "WHERE fact_a=? AND fact_b=? AND user_id=?",
+                    (a, b, user_id),
+                ).fetchone()
+                if row is None:
+                    self._db.execute(
+                        "INSERT INTO fact_edges "
+                        "(fact_a, fact_b, user_id, weight, created_at, last_reinforced) "
+                        "VALUES (?, ?, ?, 1.0, ?, ?)",
+                        (a, b, user_id, now, now),
+                    )
+                    continue
+                eff = float(row["weight"]) * self._edge_decay_factor(row["last_reinforced"])
+                if eff < self._EDGE_PRUNE_FLOOR:
+                    self._db.execute(
+                        "DELETE FROM fact_edges WHERE fact_a=? AND fact_b=? AND user_id=?",
+                        (a, b, user_id),
+                    )
+                    continue
+                self._db.execute(
+                    "UPDATE fact_edges SET weight=?, last_reinforced=? "
+                    "WHERE fact_a=? AND fact_b=? AND user_id=?",
+                    (min(eff + 1.0, self._EDGE_CAP), now, a, b, user_id),
+                )
+        return self._write_txn(_txn)
+
+    def edge_neighbours(self, fact_id: int, pool_ids: list[int], user_id: str) -> dict[int, float]:
+        """Effective, normalised (0..1) link weights from fact_id to pool_ids.
+
+        One indexed lookup per direction; decay computed read-time. Weights
+        are normalised by the cap so the provider's boost config reads on a
+        clean scale. Edges NEVER cross users: user_id is part of both the
+        query and the primary key.
+        """
+        pool = [int(i) for i in pool_ids if i is not None]
+        if not pool or fact_id is None:
+            return {}
+        marks = ",".join("?" * len(pool))
+        out: dict[int, float] = {}
+        for a_col, b_col in (("fact_a", "fact_b"), ("fact_b", "fact_a")):
+            rows = self._db.execute(
+                f"SELECT {a_col} AS src, {b_col} AS dst, weight, last_reinforced "
+                f"FROM fact_edges WHERE user_id=? AND {a_col}=? AND {b_col} IN ({marks})",
+                (user_id, int(fact_id), *pool),
+            ).fetchall()
+            for r in rows:
+                eff = float(r["weight"]) * self._edge_decay_factor(r["last_reinforced"])
+                if eff > 0:
+                    out[int(r["dst"])] = out.get(int(r["dst"]), 0.0) + min(eff, self._EDGE_CAP)
+        return {k: min(v / self._EDGE_CAP, 1.0) for k, v in out.items()}
 
 # ── Full-text search ───────────────────────────────────────────
 

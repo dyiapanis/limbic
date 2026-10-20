@@ -28,6 +28,16 @@ class LimbicStorage:
         """Graph traversal search. Override in implementations that support graphs."""
         return []  # default: no graph support
 
+    def reinforce_edges(self, fact_ids: list[int], user_id: str) -> None:
+        """Co-retrieval reinforcement: strengthen pairwise links between the
+        given facts (associative links). Override in graph-capable backends."""
+        return  # default: no graph support
+
+    def edge_neighbours(self, fact_id: int, pool_ids: list[int], user_id: str) -> dict[int, float]:
+        """Effective (decay-computed, normalised 0..1) link weights from
+        fact_id to each of pool_ids. Override in graph-capable backends."""
+        return {}  # default: no graph support
+
     def get(self, fact_id: int) -> dict | None:
         raise NotImplementedError
 

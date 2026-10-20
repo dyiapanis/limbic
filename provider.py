@@ -826,6 +826,23 @@ class LimbicMemoryProvider(MemoryProvider):
         budget = self._config.get("context_budget", 20)
         gated.sort(key=lambda f: f["composite_score"], reverse=True)
 
+        # Associative-link boost: facts co-linked with the best hit rise a
+        # little (single pass, no propagation — the provisional top-1 anchors
+        # it). Bounded by construction: boost * normalised weight can never
+        # leapfrog a genuinely more relevant fact. 0.0 (default) disables the
+        # whole feature, edges included.
+        link_boost = float(self._config.get("associative_link_boost", 0.0) or 0.0)
+        if link_boost > 0 and self._storage is not None and len(gated) > 1 and gated[0].get("fact_id") is not None:
+            tail_ids = [f.get("fact_id") for f in gated[1:budget]]
+            neighbours = self._storage.edge_neighbours(gated[0]["fact_id"], tail_ids, user_id)
+            if neighbours:
+                for f in gated[1:budget]:
+                    n = neighbours.get(f.get("fact_id"), 0.0)
+                    if n > 0:
+                        f["composite_score"] += link_boost * n
+                        f["link_boosted"] = link_boost * n  # observability
+                gated.sort(key=lambda f: f["composite_score"], reverse=True)
+
         return gated[:budget]
 
     # ── Prefetch (Thalamus → Prefrontal Cortex) ───────────────────
@@ -908,6 +925,17 @@ class LimbicMemoryProvider(MemoryProvider):
                 last_retrieved=now_iso,
             )
             injected_ids.append(fact["fact_id"])
+
+        # Co-retrieval reinforcement: facts that surfaced together in a
+        # genuine retrieval get an associative link. Same chokepoint as
+        # retrieval_count by the codebase's own doctrine — edges form only
+        # on real surfacing, and only when the feature is on (boost > 0).
+        if (float(self._config.get("associative_link_boost", 0.0) or 0.0) > 0
+                and self._storage is not None and len(injected_ids) > 1):
+            try:
+                self._storage.reinforce_edges(injected_ids, uid)
+            except Exception as e:  # links must never break a retrieval
+                logger.warning("limbic: edge reinforcement failed (ignored): %s", e)
 
         # Step 4: Store in session buffer for next-turn evaluation
         with self._session_lock:
@@ -1693,6 +1721,11 @@ class LimbicMemoryProvider(MemoryProvider):
                 "key": "context_budget",
                 "description": "Max facts injected per turn (ceiling, not target).",
                 "default": 20,
+            },
+            {
+                "key": "associative_link_boost",
+                "description": "Score boost (0-1) for facts co-retrieved with the best match. 0 disables associative links entirely (default).",
+                "default": 0.0,
             },
             {
                 "key": "nlp_languages",
