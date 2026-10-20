@@ -7,7 +7,7 @@ import sqlite3
 
 import pytest
 
-from limbic.store_sqlite import SQLiteStorage
+from limbic.store_sqlite import SQLiteStorage, _now_iso
 
 
 @pytest.fixture()
@@ -95,3 +95,29 @@ def test_reinforce_never_raises_on_missing_ids(store):
     store.reinforce_edges([], "u1")
     store.reinforce_edges([7], "u1")
     assert _edges(store) == []
+
+
+def test_fk_cascade_removes_edges_with_fact(store):
+    # delete_fact must take the edges with it — verified manually in review,
+    # pinned here.
+    a, b = _mk_fact(store), _mk_fact(store)
+    store.reinforce_edges([a, b], "u1")
+    assert len(_edges(store)) == 1
+    store.delete_fact(a)
+    assert _edges(store) == []
+
+
+def test_prune_boundary_just_above_floor_survives(store):
+    # eff == the prune floor exactly is unreachable in practice: read-time
+    # decay nudges any elapsed moment below it, so == floor prunes. Pin the
+    # real boundary: just-above-floor survives and increments.
+    a, b = _mk_fact(store), _mk_fact(store)
+    store.reinforce_edges([a, b], "u1")
+    store._db.execute(
+        "UPDATE fact_edges SET weight=?, last_reinforced=?",
+        (SQLiteStorage._EDGE_PRUNE_FLOOR * 2.0, _now_iso()),
+    )
+    store.reinforce_edges([a, b], "u1")
+    rows = _edges(store)
+    assert rows and rows[0]["weight"] == pytest.approx(
+        SQLiteStorage._EDGE_PRUNE_FLOOR * 2.0 + 1.0, rel=1e-2)

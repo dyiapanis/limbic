@@ -472,6 +472,7 @@ class SQLiteStorage(LimbicStorage):
             )
         """)
         db.execute("CREATE INDEX IF NOT EXISTS idx_fact_edges_user_a ON fact_edges(user_id, fact_a)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_fact_edges_user_b ON fact_edges(user_id, fact_b)")
 
         db.execute("""
             CREATE TABLE IF NOT EXISTS mentions (
@@ -1010,14 +1011,18 @@ class SQLiteStorage(LimbicStorage):
         pool = [int(i) for i in pool_ids if i is not None]
         if not pool or fact_id is None:
             return {}
+        # ponytail: IN-list ceiling — budget is ≤20 today; 500 caps this far
+        # below SQLITE_MAX_VARIABLE_NUMBER (999) if budget ever grows.
+        pool = pool[:500]
         marks = ",".join("?" * len(pool))
         out: dict[int, float] = {}
         for a_col, b_col in (("fact_a", "fact_b"), ("fact_b", "fact_a")):
-            rows = self._db.execute(
-                f"SELECT {a_col} AS src, {b_col} AS dst, weight, last_reinforced "
-                f"FROM fact_edges WHERE user_id=? AND {a_col}=? AND {b_col} IN ({marks})",
-                (user_id, int(fact_id), *pool),
-            ).fetchall()
+            with self._lock:
+                rows = self._db.execute(
+                    f"SELECT {a_col} AS src, {b_col} AS dst, weight, last_reinforced "
+                    f"FROM fact_edges WHERE user_id=? AND {a_col}=? AND {b_col} IN ({marks})",
+                    (user_id, int(fact_id), *pool),
+                ).fetchall()
             for r in rows:
                 eff = float(r["weight"]) * self._edge_decay_factor(r["last_reinforced"])
                 if eff > 0:

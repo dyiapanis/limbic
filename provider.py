@@ -830,7 +830,10 @@ class LimbicMemoryProvider(MemoryProvider):
         # little (single pass, no propagation — the provisional top-1 anchors
         # it). Bounded by construction: boost * normalised weight can never
         # leapfrog a genuinely more relevant fact. 0.0 (default) disables the
-        # whole feature, edges included.
+        # whole feature, edges included. NOTE: _search is shared by prefetch
+        # AND recall, so the boost applies to both surfaces — deliberate: the
+        # re-rank is the same query either way. Edge FORMATION stays
+        # prefetch-only (the genuine-retrieval chokepoint).
         link_boost = float(self._config.get("associative_link_boost", 0.0) or 0.0)
         if link_boost > 0 and self._storage is not None and len(gated) > 1 and gated[0].get("fact_id") is not None:
             tail_ids = [f.get("fact_id") for f in gated[1:budget]]
@@ -1764,6 +1767,12 @@ class LimbicMemoryProvider(MemoryProvider):
                 config["embedding"]["dims"] = values["embedding_dims"]
         if "context_budget" in values:
             config["context_budget"] = values["context_budget"]
+        if "associative_link_boost" in values:
+            config["associative_link_boost"] = values["associative_link_boost"]
+        # Pre-existing gap surfaced in review: recall_indicator was dropped
+        # the same way — both flat keys must round-trip through save_config.
+        if "recall_indicator" in values:
+            config["recall_indicator"] = values["recall_indicator"]
         if "known_users" in values:
             config["known_users"] = [u.strip() for u in str(values["known_users"]).split(",") if u.strip()]
         if "known_entities" in values:
