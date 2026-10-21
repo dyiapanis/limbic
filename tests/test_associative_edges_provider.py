@@ -68,6 +68,9 @@ class _RecordingStorage:
     def edge_neighbours(self, fact_id, pool_ids, user_id):
         return self.neighbours
 
+    def open_supersessions(self, fact_ids):
+        return {}  # contract grew in #19 — no canned supersessions here
+
     def reinforce_edges(self, fact_ids, user_id):
         self.reinforced.append((list(fact_ids), user_id))
         if self.fail_reinforce:

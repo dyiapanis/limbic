@@ -361,9 +361,20 @@ class TrustEngine:
             self._adapt()
 
     def _adapt(self):
-        """Adapt parameters based on accumulated signals."""
+        """Adapt parameters based on accumulated signals.
+
+        Min-sample guards (#19): adaptation off a handful of observations is
+        noise, not evidence — a single maturity observation used to move
+        t_half ±12h, and the relevance floor moved on 3-signal cycles.
+        Below-threshold batches are NOT cleared: they keep accumulating
+        until they form a real sample.
+        # ponytail: fixed thresholds; revisit only if adaptation proves too slow.
+        """
+        MIN_SIGNALS = 10
+        MIN_MATURITIES = 5
+
         # Signal-based adaptations (require continuation/correction data)
-        if self._signals:
+        if self._signals and len(self._signals) >= MIN_SIGNALS:
             continuations = sum(1 for s in self._signals if s["continuation"])
             corrections = sum(1 for s in self._signals if s["correction"])
             total = len(self._signals)
@@ -400,7 +411,7 @@ class TrustEngine:
             correction_rate = 0
 
         # Maturation curve adaptation — adjust t_half toward observed average maturity time
-        if self._maturity_times:
+        if self._maturity_times and len(self._maturity_times) >= MIN_MATURITIES:
             avg_hours = sum(self._maturity_times) / len(self._maturity_times)
             current_t_half = self.get("maturation_t_half")
             # Adjust t_half toward the observed average (convert hours to the same unit)
@@ -419,7 +430,8 @@ class TrustEngine:
             self._turn_count, continuation_rate, correction_rate,
             self.get("relevance_floor"),
         )
-
-        # Clear signals for next cycle
-        self._signals.clear()
+        # NOTE: below-threshold batches are deliberately NOT cleared —
+        # they accumulate across cycles until they reach MIN_SIGNALS /
+        # MIN_MATURITIES. (The old unconditional clear here reset small
+        # batches every cycle, so they never formed a sample.)
         self._save_params()

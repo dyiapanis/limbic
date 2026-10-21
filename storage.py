@@ -38,6 +38,12 @@ class LimbicStorage:
         fact_id to each of pool_ids. Override in graph-capable backends."""
         return {}  # default: no graph support
 
+    def open_supersessions(self, fact_ids: list[int]) -> dict[int, int]:
+        """Map older_fact_id → newer_fact_id for OPEN contradictions in a
+        pool (used by recall to prefer corrections). Override in
+        contradiction-aware backends."""
+        return {}  # default: no supersession support
+
     def get(self, fact_id: int) -> dict | None:
         raise NotImplementedError
 
