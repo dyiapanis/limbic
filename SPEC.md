@@ -307,7 +307,9 @@ recall(query: str) → {"results": [], "count": 0, "status": "no_confident_match
 
 **Recall-confidence gate (abstention):** when the best fact's RELEVANCE — the raw
 cosine similarity, NOT the trust-modulated composite — falls below the adaptive
-`recall_confidence_floor` (default 0.40), recall reports `no_confident_match`
+`recall_confidence_floor` (default 0.50, recalibrated 2026-10-21 from 0.40 after
+the decoy harness measured a vocabulary-overlap lookalike class at cosine
+0.42–0.44), recall reports `no_confident_match`
 instead of surfacing a near-miss — read-side metacognition. The same top-relevance
 guard applies to prefetch: if even the best fact can't clear the floor, nothing is
 injected that turn (per-fact `relevance_floor` filtering is unchanged on top of
