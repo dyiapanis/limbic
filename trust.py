@@ -41,8 +41,13 @@ DEFAULT_PARAMS = {
     # relevance (top cosine) is below this, recall() reports an abstention
     # instead of surfacing a near-miss. Calibrated 2026-10-10 on the live
     # production store (429 facts): answerable top-cosine 0.63-0.95,
-    # unanswerable 0.15-0.30 — 0.40 sits in a 0.33-wide gap.
-    "recall_confidence_floor": {"value": 0.40, "min": 0.30, "max": 0.60},
+    # unanswerable 0.15-0.30. Recalibrated 0.40 -> 0.50 on 2026-10-21 after the
+    # decoy harness (#19) measured a vocabulary-overlap lookalike class the
+    # store calibration missed: false-answer tops 0.42-0.44 at 100 facts,
+    # sitting inside the old "empty" gap. 0.50 clears the measured lookalike
+    # band by ~0.06 and stays ~0.13 under the answerable minimum — better
+    # silent than false.
+    "recall_confidence_floor": {"value": 0.50, "min": 0.30, "max": 0.60},
     "interference_penalty": {"value": 0.20, "min": 0.02, "max": 0.25},
     "surprise_boost":       {"value": 0.10, "min": 0.02, "max": 0.20},
     "surprise_percentile":  {"value": 0.90, "min": 0.80, "max": 0.99},

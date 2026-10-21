@@ -86,7 +86,9 @@ def test_unanswerable_still_abstains_on_relevance():
 def test_gate_param_registered():
     from limbic.trust import DEFAULT_PARAMS
     entry = DEFAULT_PARAMS["recall_confidence_floor"]
-    assert entry["value"] == 0.40 and entry["min"] < entry["value"] < entry["max"]
+    # 0.50 since the 2026-10-21 decoy recalibration (lookalike class at
+    # 0.42-0.44; answerable minimum 0.63) — better silent than false.
+    assert entry["value"] == 0.50 and entry["min"] < entry["value"] < entry["max"]
 
 
 def test_existing_params_file_backfills_default():
@@ -97,7 +99,7 @@ def test_existing_params_file_backfills_default():
         path = os.path.join(d, "limbic_params.json")
         json.dump({"relevance_floor": {"value": 0.25, "min": 0.15, "max": 0.60}}, open(path, "w"))
         t = TrustEngine(path)
-        assert t.get("recall_confidence_floor") == 0.40  # backfilled
+        assert t.get("recall_confidence_floor") == 0.50  # backfilled (post-recalibration default)
 
 
 def test_high_relevance_new_fact_rescued_from_silent_pool():
