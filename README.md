@@ -2,7 +2,7 @@
 
 Self-Organising Memory for AI Agents
 
-**Version 0.7.0**
+**Version 0.7.1**
 Author: D Yiapanis · License: PolyForm Noncommercial 1.0.0 (source-available; commercial use requires a separate license)
 
 Limbic is a self-organising local memory system for AI agents. It stores facts, learns which ones matter through interaction, and surfaces the right context at the right time — without ever calling an LLM. Designed for [Hermes Agent](https://hermes-agent.nousresearch.com) and implements the upstream `MemoryProvider` ABC.
@@ -35,6 +35,8 @@ The agent sees two tools (`remember`, `recall`). The operator sees one file (`li
 ---
 
 ## Quick Start
+
+**Platforms:** Linux and Windows, CI-tested on both. On Windows the model cache lives at `%USERPROFILE%\.cache\limbic`, and cross-process lock files are a POSIX feature — on Windows the store initialises lock-free (WAL mode still protects the single-writer, single-user case). All dependencies ship prebuilt Windows wheels; nothing to compile.
 
 **1 — Install** from the Hermes catalog:
 
