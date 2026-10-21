@@ -66,14 +66,14 @@ The authoritative mapping — region → process → code symbol — is `limbic/
 
 #### NLI-aware interference and correction flow
 
-For each similar existing fact, the NLI cross-encoder (MiniLMv2-L6-mnli-xnli, 100+ languages) classifies the relationship between the existing fact's content and the new content. The cross-encoder is noisy on unrelated pairs, so it only fires above similarity 0.70 — below that, similarity-band logic alone decides:
+For each similar existing fact, the NLI cross-encoder (MiniLMv2-L6-mnli-xnli, 100+ languages) classifies the relationship between the existing fact's content and the new content. The cross-encoder is noisy on unrelated pairs, so it only fires above similarity 0.70 — below that, similarity-band logic alone decides. One exception: **correction-cued writes** (content matching the correction cues — "actually", "no", "wrong", …) open the NLI gate at 0.60, because value-swap corrections ("her favourite font is X" → "actually, … is Y") measure 0.60–0.70 cosine on this embedder and the correction machinery was otherwise deaf to exactly that class (measured: 0.6606 on the canonical pair; a 0.004 query-side gap decided the order):
 
 | Similarity | NLI label | Action | Penalty |
 |---|---|---|---|
-| >0.85 | contradiction | Store correction + penalise old | correction_penalty (0.15) |
+| >0.85 | contradiction | Store correction + penalise old + link pair (supersession) | correction_penalty (0.15) |
 | >0.85 | entailment | Store new (no penalty) | 0 |
 | >0.85 | neutral | Store new + interference penalty on old | interference_penalty (0.20) |
-| 0.70-0.85 | contradiction | Store correction + penalise old | correction_penalty (0.15) |
+| 0.70-0.85 | contradiction | Store correction + penalise old + link pair (supersession) | correction_penalty (0.15) |
 | 0.70-0.85 | entailment | Deduplicate (skip — same information) | n/a |
 | 0.70-0.85 | neutral | Deduplicate (skip — same topic) | n/a |
 | 0.60-0.70 | n/a (NLI not run) | Store new (no penalty) | 0 |
@@ -99,12 +99,13 @@ The agent never sees fact IDs, payloads, or internal state. It said "remember th
 
 - **Implicit signals** — continuation (user stays on topic), correction (user says "no" or "wrong"), ignore (topic change). Per turn.
 - **Interference-based forgetting** — write-time, two directions. Retroactive: when a new fact is similar to an existing one (>0.85 cosine), the old fact's trust decreases. Proactive: when a mature fact blocks a newer silent fact (>0.7 cosine, newer created_at), the old fact's trust is penalised at 0.4× the interference rate. Based on Microsoft paper's interference model.
+- **Supersession** (recall-time, owned here) — an NLI-detected contradiction links the pair at write time; at recall, when BOTH sides clear the relevance floor for a query, the correction wins and the superseded fact is dropped from that turn's context. Safety valve: if the correction is not retrieved or is below the floor, the older fact still surfaces — a noisy NLI label can misorder at worst, never hide. This closes the day-one gap: the trust penalty alone is capped at a ~3% composite shift (smaller than embedder noise between near-identical pairs), and it reverses entrenchment — without it, retrieval boosts flowing to the superseded fact actively fought its correction. Replacement is therefore enforced at read time, while the fade remains gradual (trust dynamics + maturation, ~a week at the default curve).
 - **Bayesian surprise** — facts whose embeddings are far from the centroid of existing facts get a trust boost (0.5 → 0.6) at write time. Novel information is more memorable. Based on Microsoft paper's dopaminergic signalling model.
 - **Temporal decay** — Ebbinghaus curve; the decay clock resets on retrieval, not on decay application. Decay rate adapts per domain. The operation is **idempotent**: its anchor is the most recent of `last_retrieved`, `created_at`, and the previous decay pass (`updated_at`), so repeated application over an already-charged interval adds nothing. Required because decay runs every turn — anchoring only on `last_retrieved` re-billed the full elapsed interval each pass.
 - **Maturation** (a process, owned here) — silent → retrievable via the activation sigmoid: `1 / (1 + exp(-(hours - adjusted_t_half) / k))`. Retrieval shifts the curve left, so use shortens the silent period. `t_half` adapts toward observed average time-to-maturity.
 - **Atrophy criterion** (a process, owned here) — what makes a fact eligible for removal. The sweep itself runs in the thalamus's maintenance step.
 
-**Adaptive parameters** — decay rate, relevance floor, and the maturation curve drift toward what produces better recall quality. Parameters start at defaults.
+**Adaptive parameters** — decay rate, relevance floor, and the maturation curve drift toward what produces better recall quality. Parameters start at defaults. Adaptation is sample-gated: signal-based moves require ≥10 accumulated signals, maturation-curve moves require ≥5 maturity observations — a handful of observations is noise, not evidence, and below-threshold batches accumulate across cycles instead of being discarded.
 
 Nobody configures `retrieval_boost: 0.02`. The system discovers what works.
 

@@ -196,12 +196,28 @@ For the human running Hermes (`hermes limbic ...`):
 
 ```
 hermes limbic forget <user_id>          # right to be forgotten
-hermes limbic export <user_id>          # data export
+hermes limbic forget-fact <fact_id> --user <user_id>   # remove a single wrong fact
+hermes limbic export <user_id>          # data export (lists fact IDs)
 hermes limbic seed <user_id> <content>  # inject facts without conversation
 hermes limbic reindex                   # re-embed all facts with bundled model
 hermes limbic stats [user_id]           # per-user or aggregate metrics
 hermes limbic status [user_id]          # atrophy candidates, storage health
 ```
+
+### Fixing a wrong fact
+
+Two paths, by intent:
+
+- **The fact was wrong from the start** (a misheard name, a bad extraction):
+  remove it by ID — `hermes limbic export <user_id>` lists fact IDs,
+  `hermes limbic forget-fact <fact_id> --user <user_id>` deletes it (the
+  ownership check refuses another user's fact).
+- **The world changed** (a newer value supersedes an old one): just store the
+  correction. Write-time NLI links the pair, the old fact's trust is
+  penalised, and recall prefers the correction whenever both are relevant
+  to the query. The fade is still gradual — trust dynamics and maturation
+  (~a week at the default curve) — but the correction wins from the day
+  it is stored, not after the week.
 ---
 
 ## License

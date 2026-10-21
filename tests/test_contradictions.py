@@ -137,3 +137,22 @@ def test_storage_rejects_unknown_column_still(store):
     fid = _mkfact(store, 1)
     with pytest.raises(ValueError):
         store.update(fid, **{"pinned": True})
+
+
+def test_open_supersessions_maps_older_to_newer(store):
+    """Chains are preserved: a→b→c reads back as two directed links."""
+    a, b, c = _mkfact(store, 1), _mkfact(store, 2), _mkfact(store, 3)
+    store.link_contradiction(b, a)
+    store.link_contradiction(c, b)
+    assert store.open_supersessions([a, b, c]) == {a: b, b: c}
+
+
+def test_open_supersessions_pool_filter_and_lifecycle(store):
+    a, b = _mkfact(store, 1), _mkfact(store, 2)
+    other, newer2 = _mkfact(store, 3), _mkfact(store, 4)
+    store.link_contradiction(b, a)           # a→b (in pool)
+    store.link_contradiction(newer2, other)  # other→newer2 (out of pool)
+    assert store.open_supersessions([a, b]) == {a: b}
+    store.resolve_contradiction(b, a)         # resolved links are not open
+    assert store.open_supersessions([a, b]) == {}
+    assert store.open_supersessions([]) == {}  # empty pool short-circuits

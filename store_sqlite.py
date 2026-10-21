@@ -917,6 +917,30 @@ class SQLiteStorage(LimbicStorage):
             )
         return self._write_txn(_txn)
 
+    def open_supersessions(self, fact_ids: list[int]) -> dict[int, int]:
+        """Map older_fact_id → newer_fact_id for OPEN contradictions in a pool.
+
+        Recall uses this to prefer the correction when both sides of a
+        contradiction clear the relevance floor for a query (#19). The
+        lifecycle is owned by the contradictions table (resolve + TTL
+        cull) — this read never expires or mutates anything. Facts are
+        user-scoped by fact_id, so a pair cannot cross users.
+        """
+        pool = [int(i) for i in fact_ids if i is not None]
+        if not pool:
+            return {}
+        # ponytail: IN-list ceiling — recall budget is ≤20 today; 500 caps
+        # far below SQLITE_MAX_VARIABLE_NUMBER (999) if budget ever grows.
+        pool = pool[:500]
+        marks = ",".join("?" * len(pool))
+        with self._lock:
+            rows = self._db.execute(
+                f"""SELECT older_fact_id, newer_fact_id FROM contradictions
+                    WHERE resolved_at IS NULL AND older_fact_id IN ({marks})""",
+                pool,
+            ).fetchall()
+            return {int(r["older_fact_id"]): int(r["newer_fact_id"]) for r in rows}
+
     def count_open_contradictions(self, user_id: str) -> int:
         with self._lock:
             row = self._db.execute(

@@ -369,8 +369,20 @@ class LimbicMemoryProvider(MemoryProvider):
             # unrelated pairs (probed: benign pairs mislabelled contradiction),
             # so a contradiction label only counts inside a similarity band
             # where the texts actually discuss the same thing.
+            #
+            # Correction-cued writes open the gate one band lower: value-swap
+            # corrections ("her favourite font is X" → "actually, … is Y")
+            # measure 0.60-0.70 cosine on this embedder — below the normal
+            # gate, where NLI never ran and the correction got NO penalty and
+            # NO link (measured #19: stale-vs-correction 0.6606; query
+            # cosines 0.6522/0.6564 — a 0.004 noise gap decided the order).
+            # The is_correction cue is high-precision, so this widens the NLI
+            # window only for writes that self-declare as corrections.
+            nli_gate = 0.70
+            if self._trust is not None and self._trust.is_correction(content):
+                nli_gate = 0.60
             nli_label = "neutral"
-            if self._nli and existing_content and similarity > 0.70:
+            if self._nli and existing_content and similarity > nli_gate:
                 nli_label = self._nli.classify(existing_content, content)
 
             if nli_label == "contradiction":
@@ -833,6 +845,22 @@ class LimbicMemoryProvider(MemoryProvider):
         # Sort by composite, take top context_budget
         budget = self._config.get("context_budget", 20)
         gated.sort(key=lambda f: f["composite_score"], reverse=True)
+
+        # Supersession (#19): when both sides of an OPEN contradiction clear
+        # the floor for THIS query, the correction wins — the older fact is
+        # dropped from this turn's context. Safety valve: if the correction
+        # is not in the gated pool (below floor / not retrieved), the older
+        # fact still surfaces — a noisy NLI label can misorder at worst,
+        # never hide. This also reverses entrenchment: the correction now
+        # collects the retrieval boosts that used to reinforce the old fact.
+        if len(gated) > 1 and self._storage is not None:
+            supers = self._storage.open_supersessions(
+                [f.get("fact_id") for f in gated])
+            if supers:
+                in_pool = {f.get("fact_id") for f in gated}
+                gated = [f for f in gated
+                         if f.get("fact_id") not in supers
+                         or supers[f.get("fact_id")] not in in_pool]
 
         # Associative-link boost: facts co-linked with the best hit rise a
         # little (single pass, no propagation — the provisional top-1 anchors
