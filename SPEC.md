@@ -76,7 +76,9 @@ For each similar existing fact, the NLI cross-encoder (MiniLMv2-L6-mnli-xnli, 10
 | 0.70-0.85 | contradiction | Store correction + penalise old + link pair (supersession) | correction_penalty (0.15) |
 | 0.70-0.85 | entailment | Deduplicate (skip — same information) | n/a |
 | 0.70-0.85 | neutral | Deduplicate (skip — same topic) | n/a |
-| 0.60-0.70 | n/a (NLI not run) | Store new (no penalty) | 0 |
+| 0.60-0.70 | n/a (uncued — NLI not run) | Store new (no penalty) | 0 |
+| 0.60-0.70 | contradiction (correction-cued writes only — the cue opens the NLI gate at 0.60) | Store correction + penalise old + link pair (supersession) | correction_penalty (0.15) |
+| 0.60-0.70 | entailment / neutral (cued) | Store new (no penalty) | 0 |
 | <0.60 | n/a | Store new (no action) | 0 |
 
 **Contradictions are never deduplicated** — the correction must be stored so it can mature and replace the stale fact through trust dynamics. This is the reconsolidation trigger: NLI computes prediction error (the existing fact predicted one state, the new fact observes another), which opens the reconsolidation window.

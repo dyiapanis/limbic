@@ -357,6 +357,11 @@ class LimbicMemoryProvider(MemoryProvider):
         # be written here — this fact has no fact_id until store() below.
         contradicted_ids: list[int] = []
 
+        # Correction cue is content-constant — evaluate once, not per
+        # similar-fact iteration (delegate review deleg_8b449d32 amendment).
+        cued_correction = (self._trust is not None
+                           and self._trust.is_correction(content))
+
         for existing in similar:
             similarity = existing.get("score", 0)  # cosine similarity from KNN
             existing_content = existing.get("content", "")
@@ -378,9 +383,7 @@ class LimbicMemoryProvider(MemoryProvider):
             # cosines 0.6522/0.6564 — a 0.004 noise gap decided the order).
             # The is_correction cue is high-precision, so this widens the NLI
             # window only for writes that self-declare as corrections.
-            nli_gate = 0.70
-            if self._trust is not None and self._trust.is_correction(content):
-                nli_gate = 0.60
+            nli_gate = 0.60 if cued_correction else 0.70
             nli_label = "neutral"
             if self._nli and existing_content and similarity > nli_gate:
                 nli_label = self._nli.classify(existing_content, content)
