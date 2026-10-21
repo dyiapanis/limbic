@@ -924,7 +924,10 @@ class SQLiteStorage(LimbicStorage):
         contradiction clear the relevance floor for a query (#19). The
         lifecycle is owned by the contradictions table (resolve + TTL
         cull) — this read never expires or mutates anything. Facts are
-        user-scoped by fact_id, so a pair cannot cross users.
+        user-scoped by fact_id, so a pair cannot cross users. NOTE: the
+        CALLER must scope fact_ids to one user's gated pool — this read
+        does not re-check ownership; the write side (link_contradiction)
+        only ever links same-user similarity hits.
         """
         pool = [int(i) for i in fact_ids if i is not None]
         if not pool:

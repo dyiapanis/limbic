@@ -10,11 +10,7 @@ LLM agents forget. Limbic gives an agent local, self-organising long-term memory
 
 ## How does it solve it?
 
-The agent gets two tools (`remember`/`recall`). Writes pass through a trust engine (corrections demote stale claims), write-time NLI contradiction detection, and entity linking. Reads are hybrid keyword+vector search with time decay. See SPEC.md §Hippocampus/§Thalamus for mechanics.
-
-## What is the impact of installing?
-
-One directory (~700 MB, mostly models, downloaded lazily on first use) + one SQLite DB. CPU-only inference (int8 ONNX) — no GPU required.
+The agent gets two tools (`remember`/`recall`). Writes pass through a trust engine (corrections demote stale claims), write-time NLI contradiction detection, and entity linking. Reads run a hybrid recall engine — vector KNN, keyword (FTS5), and entity-graph traversal. See SPEC.md §Hippocampus/§Thalamus for mechanics.
 
 ## Does it allow for "dreaming"?
 
@@ -24,9 +20,9 @@ No offline dream phase. NLI runs at write time (inside `remember()`); every turn
 
 Hermes loads ONE memory provider at a time (`memory.provider`). Limbic replaces the default store; it doesn't co-exist with another provider in the same profile.
 
-## Performance requirements?
+## Hardware requirements?
 
-Runs on a minimalist 2-core, non-GPU server: embedding is int8 ONNX on CPU, NLI gate only spins at write time, storage is embedded SQLite. See SPEC.md §Performance budget / §Scale projections for measured numbers.
+Runs on a minimalist 2-core, non-GPU server: embedding is int8 ONNX on CPU, NLI gate only spins at write time, storage is embedded SQLite. One directory (~700 MB, mostly models, downloaded lazily on first use) + one SQLite DB. CPU-only inference (int8 ONNX) — no GPU required. See SPEC.md §Performance budget / §Scale projections for measured numbers.
 
 ## What are the dependencies for?
 
@@ -42,14 +38,14 @@ No network calls after the one-time model download; models are sha-pinned.
 
 No — both models run locally as bundled ONNX (offline, no API). No remote option by design.
 
-## Telegram group with topics — how to keep memories separate?
+## Messaging group (Matrix, Telegram, Discord etc) with topics — how to keep memories separate?
 
-Memory is per Hermes profile. For 6 people sharing one group:
+Memory is per Hermes profile. For 2 or more people sharing one group:
 
 - **One profile + `users.yaml`** — Limbic recognises the user and scopes memories (e.g. "Alice likes tacos"). Soft separation: family-doctor model — knows all members, doesn't volunteer others' info normally.
-- **Separate profiles** — hard isolation, each agent has its own DB. Use if no leakage is acceptable.
+- **Separate profiles** — dedicated agent per user, hard isolation, each agent has its own DB. Use if no leakage is acceptable.
 
-Only bots *mentioned* in a topic saving memories is controlled by wake-words/platform filtering in Hermes, not limbic-side — Limbic stores what the profile's agent is given.
+Only bots *mentioned* in a topic saving memories are controlled by wake-words/platform filtering in Hermes, not limbic-side — Limbic stores what the profile's agent is given.
 
 ## Where do files go?
 
@@ -67,7 +63,3 @@ Plugin code updates via `hermes plugin update`; DB is untouched. If a new versio
 ## How is it backed up?
 
 DB is a single SQLite file. `hermes backup` includes `~/.hermes/profiles/<name>/limbic.db` and `limbic.yaml`. Restore by copying back; no scripts needed. Model cache is re-downloadable.
-
-## Example multi-session walkthrough?
-
-TBD — concrete fleet walkthrough on roadmap (six-agent use tracked in #17).
