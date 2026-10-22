@@ -20,6 +20,14 @@ class LimbicStorage:
         """Full-text search using BM25. Override in implementations that support FTS."""
         return []  # default: no FTS support
 
+    def bump_metric(self, key: str, n: int = 1) -> None:
+        """Recall outcome counter. Override in backends that persist metrics."""
+        return  # default: no metric support
+
+    def get_metrics(self) -> dict:
+        """Recall outcome counters. Override in backends that persist metrics."""
+        return {}  # default: no metric support
+
     def store_entities(self, fact_id: int, entities: list[dict]):
         """Store entities and create graph edges. Override in implementations that support graphs."""
         pass  # default: no graph support

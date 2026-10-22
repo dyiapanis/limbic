@@ -47,6 +47,15 @@ Memory is per Hermes profile. For 2 or more people sharing one group:
 
 Only bots *mentioned* in a topic saving memories are controlled by wake-words/platform filtering in Hermes, not limbic-side — Limbic stores what the profile's agent is given.
 
+## Why didn't you remember X?
+
+When nothing clears the confidence floor, recall stays silent on purpose — a
+plausible-but-wrong near-miss is worse than no answer. The abstention carries the
+numbers: the floor in force, which retrieval lane got closest, and a short
+excerpt of the near-miss (truncated at 120 chars) — so you can see what almost fired. The floor's
+calibration record is published in `eval/calibration.json`, and the abstention
+rate is visible in `stats()` so drift is observable.
+
 ## Can I delete a specific memory?
 
 Yes — ask the agent ("forget the fact about …"). It lists matching memories with short

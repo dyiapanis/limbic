@@ -633,6 +633,52 @@ class LimbicMemoryProvider(MemoryProvider):
 
     # ── Retrieval (Thalamus) ───────────────────────────────────────
 
+    def _bump(self, key: str) -> None:
+        """Recall outcome counter (fails soft, never breaks recall)."""
+        if self._storage:
+            try:
+                self._storage.bump_metric(key)
+            except Exception:
+                pass
+
+    def _recall_metrics(self) -> dict:
+        """Abstention watch — calibration drift is visible here (see
+        eval/calibration.json for the record that chose the floor).
+        Counters are install-wide, not per-user."""
+        try:
+            m = self._storage.get_metrics() if self._storage else {}
+        except Exception:
+            m = {}
+        total = m.get("recall_total", 0)
+        abstain = m.get("recall_abstain", 0)
+        return {"scope": "install-wide", "total": total, "abstained": abstain,
+                "abstention_rate": round(abstain / total, 4) if total else None}
+
+    def _abstain_lane(self, query: str, user_id: str, session_id: str,
+                      top_row: dict) -> str:
+        """Which retrieval lane produced the near-miss — diagnostic only,
+        on the rare abstention branch, so the gate can explain its own
+        decision (floor vs near-miss, which lane was closest). Uses the
+        same guardian-expanded access filter as _search so guarded-user
+        near-misses are probed on the right lanes.
+        ponytail: lane inferred from field shape + one FTS re-probe."""
+        if self._storage is None:
+            return "unknown"
+        guardian_of = self._session_guardian_of.get(session_id, [])
+        filters = ({"user_id_any": [user_id] + list(guardian_of)}
+                   if guardian_of else {"user_id": user_id})
+        fid = top_row.get("fact_id")
+        try:
+            fts_probe = self._storage.search_fts(query_text=query,
+                                                 filters=filters, limit=15)
+            in_fts = fid is not None and any(
+                r.get("fact_id") == fid for r in fts_probe)
+        except Exception:
+            return "unknown"
+        if top_row.get("vector_score") is not None:
+            return "vector+fts" if in_fts else "vector"
+        return "fts" if in_fts else "graph"
+
     def recall(self, query: str, session_id: str | None = None) -> dict:
         """Search memory. The thalamus routes and gates."""
         if not self._initialised:
@@ -643,9 +689,16 @@ class LimbicMemoryProvider(MemoryProvider):
             return {"error": "No user_id resolved", "results": [], "count": 0}
 
         results = self._search(query, uid, session_id=session_id or "")
+        if self._trust is None:
+            return {"error": "Limbic not initialised", "results": [], "count": 0}
+        self._bump("recall_total")
         if not results:
+            self._bump("recall_abstain")
+            floor = self._trust.get("recall_confidence_floor")
             return {"results": [], "count": 0,
-                    "status": "no_confident_match", "top_score": 0.0}
+                    "status": "no_confident_match", "top_score": 0.0,
+                    "floor": round(floor, 4) if floor is not None else None,
+                    "path": "none", "best_excerpt": None}
 
         # Recall-confidence gate (read-side metacognition): the best fact's
         # RELEVANCE (cosine — the scale this floor is calibrated on) must clear
@@ -656,13 +709,18 @@ class LimbicMemoryProvider(MemoryProvider):
         # falsely abstain (measured: 5/10 natural probes abstained on the
         # composite scale, 0/10 on cosine).
         trust = self._trust
-        if trust is None:
-            return {"error": "Limbic not initialised", "results": [], "count": 0}
         conf_floor = trust.get("recall_confidence_floor")
         top = max(float(r.get("relevance", r.get("composite_score", 0.0)) or 0.0) for r in results)
         if top < conf_floor:
+            self._bump("recall_abstain")
+            top_row = max(results, key=lambda r: float(
+                r.get("relevance", r.get("composite_score", 0.0)) or 0.0))
             return {"results": [], "count": 0, "status": "no_confident_match",
-                    "top_score": round(top, 4)}
+                    "top_score": round(top, 4),
+                    "floor": round(conf_floor, 4),
+                    "path": self._abstain_lane(query, uid, session_id or "",
+                                               top_row),
+                    "best_excerpt": (top_row.get("content") or "")[:120]}
         return {
             "results": [{"content": r["content"]} for r in results],
             "count": len(results),
@@ -1588,6 +1646,7 @@ class LimbicMemoryProvider(MemoryProvider):
                         "enabled": bool(self._entity_extractor and self._entity_extractor.available),
                         "languages": getattr(self._entity_extractor, "_languages", None),
                     },
+                    "recall": self._recall_metrics(),
                 }
             else:
                 # Aggregate stats across all users
@@ -1628,6 +1687,7 @@ class LimbicMemoryProvider(MemoryProvider):
                         "enabled": bool(self._entity_extractor and self._entity_extractor.available),
                         "languages": getattr(self._entity_extractor, "_languages", None),
                     },
+                    "recall": self._recall_metrics(),
                     "telemetry": {
                         "prefetch_calls": prefetch_count,
                         "prefetch_avg_ms": prefetch_avg,

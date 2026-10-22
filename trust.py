@@ -46,7 +46,8 @@ DEFAULT_PARAMS = {
     # store calibration missed: false-answer tops 0.42-0.44 at 100 facts,
     # sitting inside the old "empty" gap. 0.50 clears the measured lookalike
     # band by ~0.06 and stays ~0.13 under the answerable minimum — better
-    # silent than false.
+    # silent than false. Calibration record: eval/calibration.json
+    # (re-measure when a store doubles or the embedder changes).
     "recall_confidence_floor": {"value": 0.50, "min": 0.30, "max": 0.60},
     "interference_penalty": {"value": 0.20, "min": 0.02, "max": 0.25},
     "surprise_boost":       {"value": 0.10, "min": 0.02, "max": 0.20},

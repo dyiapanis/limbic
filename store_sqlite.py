@@ -528,7 +528,34 @@ class SQLiteStorage(LimbicStorage):
             )
         """)
 
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS recall_metrics (
+                key TEXT PRIMARY KEY,
+                value INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+
         self._db.commit()
+
+    def bump_metric(self, key: str, n: int = 1) -> None:
+        """Recall outcome counters (calibration watch — see eval/calibration.json).
+        Fails soft: metrics never break recall."""
+        def _txn():
+            self._db.execute(
+                "INSERT INTO recall_metrics(key, value) VALUES(?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = value + excluded.value",
+                (key, n))
+        try:
+            self._write_txn(_txn)
+        except Exception:
+            pass
+
+    def get_metrics(self) -> dict:
+        try:
+            rows = self._db.execute("SELECT key, value FROM recall_metrics").fetchall()
+            return {r["key"]: r["value"] for r in rows}
+        except Exception:
+            return {}
 
     # ── Core CRUD ──────────────────────────────────────────────────
 
