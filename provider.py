@@ -1442,6 +1442,98 @@ class LimbicMemoryProvider(MemoryProvider):
         ok = self._storage.delete_fact(fact_id)
         return {"removed": ok, "fact_id": fact_id}
 
+    def forget_memory(self, query: str | None = None, fact_id: int | None = None,
+                      user_id: str | None = None, session_id: str = "") -> dict:
+        """Owner-initiated removal — the one manual control (see SPEC:
+        Ownership boundary). Two-step by design (agent-facing `forget` tool):
+
+        - ``forget(query=...)``: list candidate facts for review —
+          nothing is deleted. Deliberately broader than recall: silent,
+          fading, and superseded facts still surface here, because the
+          memory an owner wants removed may be exactly one that never
+          passes the recall gates.
+        - ``forget(fact_id=...)``: remove that one fact (user-scoped),
+          write a hash-only tombstone receipt — content is NOT retained —
+          and return the removed content as confirmation.
+
+        Mechanisms stay opaque; fact ids surface only inside this flow.
+        """
+        if not self._initialised or not self._storage:
+            return {"error": "Limbic not initialised"}
+        uid = user_id or self._get_user_id(session_id or "")
+        if uid is None:
+            return {"error": "No user_id resolved"}
+
+        if query and fact_id is None:
+            # Step 1: raw hybrid candidates — no activation gate, no
+            # confidence floor, no supersession filtering. FTS always runs
+            # (embedder optional); vector joins in when available.
+            embedding = self._embedder.embed(query, is_query=True) if self._embedder else None
+            filters = {"user_id": uid}
+            candidates: list[dict] = []
+            if embedding is not None:
+                candidates = self._storage.search(embedding=embedding, filters=filters, limit=15)
+            fts = self._storage.search_fts(query_text=query, filters=filters, limit=15)
+            if fts:
+                candidates = (self._rrf_fuse(candidates, fts, limit=15)
+                              if candidates else fts)
+            seen, deduped = set(), []
+            for f in candidates:
+                fid = f.get("fact_id")
+                if fid not in seen:
+                    seen.add(fid)
+                    deduped.append(f)
+            if not deduped:
+                return {"status": "no_match", "candidates": [], "count": 0,
+                        "hint": "no facts matched; try different wording"}
+            out = []
+            for f in deduped[:10]:
+                out.append({
+                    "fact_id": f.get("fact_id"),
+                    "excerpt": (f.get("content") or "")[:120],
+                    "created_at": f.get("created_at"),
+                    "trust_score": f.get("trust_score"),
+                })
+            return {"status": "candidates", "candidates": out, "count": len(out),
+                    "hint": "show these to the user; call forget again with the chosen fact_id"}
+
+        if fact_id is not None and not query:
+            # Step 2: delete, user-scoped, with a hash-only receipt.
+            fact = self._storage.get(fact_id)
+            if not fact or fact.get("user_id") != uid:
+                return {"error": "fact not found for user", "fact_id": fact_id}
+            content = fact.get("content") or ""
+            ok = self._storage.delete_fact(fact_id)
+            if ok:
+                self._write_deletion_receipt(uid, fact_id, content)
+            return {"removed": ok, "fact_id": fact_id, "content": content}
+
+        return {"error": "exactly one of query / fact_id is required"}
+
+    def _write_deletion_receipt(self, user_id: str, fact_id: int, content: str) -> None:
+        """Hash-only tombstone. The receipt must never retain content —
+        deleting a secret and keeping it in a log would defeat the point;
+        re-remembering the same content is identifiable via the hash."""
+        try:
+            import hashlib
+            db_path = getattr(self._storage, "_db_path", "")
+            if not db_path:
+                return
+            receipt_path = db_path + ".deletions.jsonl"
+            line = {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "user_id": user_id,
+                "fact_id": fact_id,
+                "content_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                "content_chars": len(content),
+            }
+            with open(receipt_path, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(line) + "\n")
+            os.chmod(receipt_path, 0o600)  # tighten every write, idempotent
+        except Exception:
+            logger.warning("limbic: deletion receipt write failed (delete stands)",
+                           exc_info=True)
+
     def export(self, user_id: str) -> dict:
         """Data export. Returns all facts for a user."""
         if not self._storage:
@@ -1686,8 +1778,8 @@ class LimbicMemoryProvider(MemoryProvider):
 
     def get_tool_schemas(self) -> list[dict]:
         """Return tool schemas for the agent."""
-        from .tools import REMEMBER_SCHEMA, RECALL_SCHEMA
-        return [REMEMBER_SCHEMA, RECALL_SCHEMA]
+        from .tools import REMEMBER_SCHEMA, RECALL_SCHEMA, FORGET_SCHEMA
+        return [REMEMBER_SCHEMA, RECALL_SCHEMA, FORGET_SCHEMA]
 
     def sync_turn(self, user_content: str, assistant_content: str, *,
                   session_id: str = "", messages: list | None = None) -> None:
@@ -1715,6 +1807,9 @@ class LimbicMemoryProvider(MemoryProvider):
             "You have persistent memory via Limbic (SQLite-backed). "
             "Save durable facts using the `remember(content)` tool. "
             "Search prior context using the `recall(query)` tool. "
+            "Remove a specific memory ONLY when the user explicitly asks — use the "
+            "`forget` tool (query lists candidates; the user picks; fact_id deletes). "
+            "Never delete on your own initiative.\n"
             "Memory is injected into every turn, so keep it compact and focused on facts that "
             "will still matter later.\n"
             "Prioritize what reduces future user steering — the most valuable memory is one "

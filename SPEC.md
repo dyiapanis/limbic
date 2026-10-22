@@ -1,6 +1,6 @@
 # Limbic — Opaque Memory System Specification
 
-**Version 0.7.1** · Author: D Yiapanis · License: PolyForm Noncommercial 1.0.0
+**Version 0.8.0** · Author: D Yiapanis · License: PolyForm Noncommercial 1.0.0
 
 ## Overview
 
@@ -299,12 +299,14 @@ This is not a fact — it is a directive injected by the thalamus alongside the 
 
 ## What the Agent Sees
 
-Two tools:
+Three tools:
 
 ```
 remember(content: str) → {"status": "stored"}
 recall(query: str) → {"results": [...], "count": N, "status": "ok", "top_score": S}
 recall(query: str) → {"results": [], "count": 0, "status": "no_confident_match", "top_score": S}
+forget(query: str) → {"status": "candidates", "candidates": [{fact_id, excerpt, created_at, trust_score}], ...}
+forget(fact_id: int) → {"removed": true, "fact_id": N, "content": "..."}
 ```
 
 **Recall-confidence gate (abstention):** when the best fact's RELEVANCE — the raw
@@ -339,6 +341,24 @@ Adaptive parameter engine — self-tuning trust and retrieval weights.
 
 No categories. No trust scores. No fact IDs. Just context. Only what's relevant. Sometimes nothing.
 
+**Owner-initiated removal — the one manual control.** `forget` exists because
+the data's owner has a right to remove their own memory: a privacy requirement,
+not memory management, and the deliberate exception to opacity. Two-step by
+design: `forget(query)` lists candidate facts — deliberately broader than recall,
+since the memory an owner wants removed may be exactly one that never passes the
+recall gates (silent, fading, superseded facts surface here); `forget(fact_id)`
+then deletes that one fact, user-scoped. Opacity is unaffected where it matters:
+fact ids surface only inside this flow — never in recall results or injected
+context — and no mechanism (trust, decay, interference) can be operated
+manually. Tool contract: execute only on the user's explicit request. Every
+deletion appends a hash-only tombstone receipt (`limbic.db.deletions.jsonl`,
+0600): `{ts, user_id, fact_id, content_sha256, content_chars}` — the content
+itself is never retained, so removing a secret is not undone by its own audit
+trail. `created_at`/`trust_score` surface only inside this review flow, never
+in recall results or injected context. Guardian relationships are read-only
+here: a guardian can recall a guarded user's memories but cannot delete them —
+removal stays own-data only.
+
 The agent tunes the system through interaction:
 - "Remember that I'm vegan" → fact stored, starts maturing
 - "No, that's wrong" → correction signal, trust drops on stale fact, new fact matures to replace it
@@ -366,7 +386,8 @@ reindex(provider: str, **config) → {"reindexed": N, "status": "complete"}
 stats(user_id: str | None) → {"total_facts": N, "avg_trust": F, "matured": N, ...}
 ```
 
-- `forget` — right to be forgotten. Removes all data for that user.
+- `forget` — right to be forgotten. Removes all data for that user (bulk; the
+  agent-facing `forget` tool is distinct — single fact, owner instruction).
 - `export` — data export / debug window. GDPR-style.
 - `seed` — inject facts without conversation. For migration or operator-initiated context loading.
 - `reindex` — re-embed all facts with the bundled model (optionally at new dims). Creates a new `vec_index`, re-embeds, swaps atomically, drops the old index. The FTS and fact rows are untouched.
@@ -517,6 +538,7 @@ The system ships with two ONNX models, both running in-process on CPU via onnxru
 
 - **User scoping** — enforced at code level (WHERE clause on every retrieval). Verified by code review, not DB inspection.
 - **Right to be forgotten** — `forget(user_id)` removes all data for that user. Operator function.
+- **Owner-initiated removal** — the `forget` agent tool deletes a single fact at its owner's explicit request, user-scoped. A hash-only tombstone receipt (`limbic.db.deletions.jsonl`, 0600) records the deletion; content is never retained.
 - **Data export** — `export(user_id)` returns all stored data. GDPR-style.
 - **Backup** — the database file contains all users' data. Backup is all-or-nothing per agent. Selective per-user backup via `export`.
 - **No cloud data exfiltration** — bundled model runs in-process; no endpoint option exists.
@@ -1031,7 +1053,7 @@ Concurrent sessions: session-keyed user_id cache with threading.Lock.
 ```yaml
 # plugin.yaml
 name: limbic
-version: 0.7.1
+version: 0.8.0
 description: "Self-organising memory system. Opaque, adaptive, self-contained. Modelled on the biological limbic system."
 author: "D Yiapanis"
 kind: exclusive
