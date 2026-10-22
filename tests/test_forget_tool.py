@@ -95,7 +95,8 @@ def test_fact_id_step_deletes_scoped_and_writes_hash_only_receipt(provider, tmp_
     # Receipt: hash-only, no content, 0600
     rp = _receipt_path(provider)
     assert os.path.exists(rp)
-    assert os.stat(rp).st_mode & 0o777 == 0o600
+    if os.name == "posix":  # windows has no posix mode bits; chmod is a no-op there
+        assert os.stat(rp).st_mode & 0o777 == 0o600
     raw = open(rp).read()
     assert "hunter2" not in raw  # the secret must not be retained
     line = json.loads(raw.strip().splitlines()[-1])
