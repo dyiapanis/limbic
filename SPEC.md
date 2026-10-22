@@ -304,7 +304,7 @@ Three tools:
 ```
 remember(content: str) → {"status": "stored"}
 recall(query: str) → {"results": [...], "count": N, "status": "ok", "top_score": S}
-recall(query: str) → {"results": [], "count": 0, "status": "no_confident_match", "top_score": S}
+recall(query: str) → {"results": [], "count": 0, "status": "no_confident_match", "top_score": S, "floor": F, "path": "vector|fts|graph|none", "best_excerpt": "..."}
 forget(query: str) → {"status": "candidates", "candidates": [{fact_id, excerpt, created_at, trust_score}], ...}
 forget(fact_id: int) → {"removed": true, "fact_id": N, "content": "..."}
 ```
@@ -314,9 +314,21 @@ cosine similarity, NOT the trust-modulated composite — falls below the adaptiv
 `recall_confidence_floor` (default 0.50, recalibrated 2026-10-21 from 0.40 after
 the decoy harness measured a vocabulary-overlap lookalike class at cosine
 0.42–0.44), recall reports `no_confident_match`
-instead of surfacing a near-miss — read-side metacognition. The same top-relevance
-guard applies to prefetch: if even the best fact can't clear the floor, nothing is
-injected that turn (per-fact `relevance_floor` filtering is unchanged on top of
+instead of surfacing a near-miss — read-side metacognition. The abstention payload
+explains the gate's own decision: `floor` (the in-force value), `path` (which
+retrieval lane produced the near-miss: vector / fts / graph / none), and
+`best_excerpt` (the near-miss content, truncated at 120 chars, no ellipsis
+marker) — so the owner can ask why a memory didn't surface and get a real
+answer. No fact ids, no row access. The
+calibration record lives in `eval/calibration.json` (chosen floor, measured
+harness numbers, re-measure triggers); the cumulative abstention rate is
+observable in `stats()["recall"]` — install-wide counters (`"scope":
+"install-wide"`), not per-user — where a sustained rise means the floor, the
+store, or the embedder drifted. Note the operational profile change: recall
+is no longer purely read-only — each call performs 1-2 small fail-soft
+counter UPSERTs (WAL growth negligible; the counters never break recall).
+The same top-relevance guard applies to prefetch: if even the best fact
+can't clear the floor, nothing is injected that turn (per-fact `relevance_floor` filtering is unchanged on top of
 it). The gate is deliberately cosine-gated: composite conflates match confidence
 with fact trust — natural queries about recently-stored (low-trust) facts would
 falsely abstain (measured: 5/10 natural probes abstained via composite vs 0/10 via
@@ -938,7 +950,7 @@ Where:
 
 **Silent-facts fallback:** If no active facts pass the relevance gate, high-relevance silent facts (activation < 0.5 but embedding_score >= floor) are returned sorted by embedding score. This prevents empty recall when all matching facts are still in the maturation period. The confidence rescue (STEP 3) narrows this fallback's job to the truly-marginal band: facts whose relevance clears the confidence floor never enter it.
 
-**Confidence-gated recall (tool contract):** the explicit `recall()` tool reports `{"status": "no_confident_match", "top_score": S}` when the best relevance falls below the floor — read-side metacognition. `prefetch()` shares the same top-relevance guard but returns an empty context block instead of a status field (the turn simply runs without memory). See "What the Agent Sees" for the agent-facing contract.
+**Confidence-gated recall (tool contract):** the explicit `recall()` tool reports `{"status": "no_confident_match", "top_score": S, "floor": F, "path": P, "best_excerpt": E}` when the best relevance falls below the floor — read-side metacognition. `prefetch()` shares the same top-relevance guard but returns an empty context block instead of a status field (the turn simply runs without memory). See "What the Agent Sees" for the agent-facing contract.
 
 **Over-fetch:** The search requests `limit * 5` results. Without this, a crowd of recent silent facts can dominate the top-K and starve recall of active facts that are further in vector distance but actually eligible for injection.
 
@@ -969,6 +981,19 @@ Where:
 | 100,000 | ~200ms | ~217-219ms |
 
 **KNN search is a linear scan**, so cost grows with fact count; the 5,879-fact measurement (10.2ms, Section 4.1.1) sits where the curve predicts. Embedding generation is constant at ~17-19ms steady-state (int8 Arctic L, measured 2026-10-10 on the production store; earlier ~5-10ms estimates under-measured the 1024-dim model). One-time ~1s ONNX session load is paid at initialization via warm-up thread, not per-turn. An ANN index is future work in sqlite-vec, and would change the shape of this table.
+
+**End-to-end tool latency (measured 2026-10-22, copy of the live fleet store at
+675 facts, 30 ops per tool, warm caches, bundled int8 embedder):**
+
+| Tool | p50 | p95 |
+|---|---|---|
+| `remember(content)` | 22ms | 27ms |
+| `recall(query)` | 41ms | 46ms |
+
+NLI correction detection fired 0 times across the 30 disjoint writes — it runs
+only when a new fact lands in the >0.70 similarity interference band, so its
+~2-4ms cost appears only on writes near existing memories. Known-fact queries
+abstained 1/30; empty-store or off-topic queries abstain 100% by design.
 
 ### 5. Maturation — Activation Sigmoid (Amygdala)
 
