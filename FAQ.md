@@ -47,6 +47,15 @@ Memory is per Hermes profile. For 2 or more people sharing one group:
 
 Only bots *mentioned* in a topic saving memories are controlled by wake-words/platform filtering in Hermes, not limbic-side — Limbic stores what the profile's agent is given.
 
+## Can I delete a specific memory?
+
+Yes — ask the agent ("forget the fact about …"). It lists matching memories with short
+excerpts, you pick one, and it's deleted (user-scoped — only your own). A tombstone receipt
+with a SHA-256 hash of the removed content is kept (`limbic.db.deletions.jsonl`); the
+content itself is never retained after deletion, so removing a secret isn't undone by its
+own audit trail. Bulk removal ("right to be forgotten") stays an operator CLI function, and
+guardians can't delete a guarded user's memories — only your own can be removed.
+
 ## Where do files go?
 
 - Plugin code: `~/.hermes/plugins/limbic/`

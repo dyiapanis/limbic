@@ -11,3 +11,6 @@ build/
 
 # User manifest — private deployment data, users.yaml.example ships instead
 users.yaml
+
+# limbic runtime writer lock
+.writer.lock

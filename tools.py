@@ -1,10 +1,11 @@
 """Limbic tools — the agent interface.
 
-Two tools. The agent feeds experiences and queries memory.
-Everything else is internal.
+Three tools. The agent feeds experiences, queries memory, and removes a
+memory when its owner explicitly asks. Everything else is internal.
 
   remember(content) → stored
   recall(query) → results
+  forget(query | fact_id) → candidates → removed (owner-initiated only)
 """
 from __future__ import annotations
 
@@ -57,6 +58,39 @@ RECALL_SCHEMA = {
     },
 }
 
+FORGET_SCHEMA = {
+    "name": "forget",
+    "description": (
+        "Remove a specific memory at the user's explicit request — the "
+        "owner-initiated removal path (the only manual memory control). "
+        "Two-step: FIRST call with query to list candidate facts (id, "
+        "excerpt, created, trust); show them to the user; THEN call with "
+        "the chosen fact_id to delete. Execute ONLY when the user "
+        "explicitly asks to delete or remove a memory — never on your "
+        "own initiative, never to 'clean up'. A hash-only receipt is "
+        "kept; the content itself is not retained after deletion."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": (
+                    "What to search for — returns candidate facts for the "
+                    "user's review. Nothing is deleted in this step."
+                ),
+            },
+            "fact_id": {
+                "type": "integer",
+                "description": (
+                    "The fact id to delete, chosen from a previous "
+                    "candidate listing shown to the user."
+                ),
+            },
+        },
+    },
+}
+
 
 def handle_tool_call(provider, tool_name: str, args: dict, session_id: str = "") -> str:
     """Dispatch tool calls to the provider."""
@@ -83,6 +117,24 @@ def handle_tool_call(provider, tool_name: str, args: dict, session_id: str = "")
             if len(query) > MAX_CONTENT:
                 return json.dumps({"error": f"query too long (max {MAX_CONTENT} chars)"})
             result = provider.recall(query, session_id=session_id)
+            return json.dumps(result, ensure_ascii=False)
+
+        elif tool_name == "forget":
+            query = args.get("query", "")
+            fact_id = args.get("fact_id")
+            if isinstance(query, str):
+                query = query.strip()
+            if fact_id is not None and not isinstance(fact_id, int):
+                if isinstance(fact_id, str) and fact_id.strip().isdigit():
+                    fact_id = int(fact_id)
+                else:
+                    return json.dumps({"error": "fact_id must be an integer"})
+            if bool(query) == bool(fact_id is not None):
+                return json.dumps({"error": "pass exactly one of query / fact_id"})
+            if query and len(query) > MAX_CONTENT:
+                return json.dumps({"error": f"query too long (max {MAX_CONTENT} chars)"})
+            result = provider.forget_memory(query=query or None, fact_id=fact_id,
+                                            session_id=session_id)
             return json.dumps(result, ensure_ascii=False)
 
         return json.dumps({"error": f"Unknown tool: {tool_name}"})
