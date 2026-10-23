@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Limbic recall eval harness — Stage A of the associative-linking scope.
+"""Limbic recall eval harness — Real-pipeline recall measurement (calibration re-measure lane).
 
 Builds a fresh synthetic corpus, drives the REAL provider pipeline
 (embedder + KNN + FTS + graph merge + scoring + confidence gate),
@@ -9,7 +9,7 @@ and reports recall on two surfaces:
   gated — product surface (provider.recall, what the agent receives)
 
 Deterministic: fixed corpus, fixed queries, real ONNX embedder.
-Usage: eval/recall_eval.py [--home DIR]   (run with the gateway tools python)
+Usage: eval/recall_eval.py [--home DIR] [--passes N] [--contested]   (run with the gateway tools python)
 Output: human table + one EVAL_JSON line for before/after diffing.
 """
 import json
@@ -292,16 +292,11 @@ def _arg(name: str, default: str) -> str:
 def main() -> int:
     home = _arg("--home", "") or build_home()
     passes = int(_arg("--passes", "2"))
-    boost = float(_arg("--boost", "0.0"))
     corpus, queries = ((CORPUS_CONTESTED, QUERIES_CONTESTED)
                        if "--contested" in sys.argv else (CORPUS, QUERIES))
     if not os.path.isdir(home):
         os.makedirs(home, exist_ok=True)
-    if boost > 0:
-        # Feature config for this run only — scratch home, never the fleet's.
-        with open(os.path.join(home, "limbic.yaml"), "w") as f:
-            f.write(f"associative_link_boost: {boost}\n")
-    print(f"eval home: {home}  passes={passes} boost={boost}")
+    print(f"eval home: {home}  passes={passes}")
 
     # The gateway runtime is isolated-mode: PYTHONPATH breaks its env
     # resolution. Insert paths in-process, exactly like the launcher does.
@@ -342,7 +337,7 @@ def main() -> int:
         gated_total = 0
         for domain, query, expected_idx in queries:
             expected_contents = {corpus[domain][i] for i in expected_idx}
-            # prefetch = the real user flow: counts + (boost>0) link formation
+            # prefetch = the real user flow: injection + counters
             p.prefetch(query, session_id="eval-session")
             raw = p._search(query, UID, limit=K)
             got_contents = [r.get("content") for r in raw]
