@@ -25,6 +25,9 @@ The agent sees three tools (`remember`, `recall`, `forget`). The operator sees o
 - Similar memories compete — newer ones supersede older ones, older ones can block similar new ones
 - Novel facts get a trust boost; familiar ones don't
 - Corrections update trust without ever editing the stored fact
+- The opposite of atrophy is real too — use keeps a memory alive: recall
+  resets its decay clock, and reinforcement lifts its trust, so what matters
+  rises while what does not fades
 - A background sweep removes memories that have faded beyond recall.
 - If nothing relevant exists for a query, recall says so (`no_confident_match`) rather than guessing
 - Relevance thresholds and decay rates tune themselves from use
