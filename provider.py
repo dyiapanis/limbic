@@ -1457,6 +1457,9 @@ class LimbicMemoryProvider(MemoryProvider):
         if not fact or fact.get("user_id") != user_id:
             return {"error": "fact not found for user", "fact_id": fact_id}
         ok = self._storage.delete_fact(fact_id)
+        # Invariant: EVERY deletion writes a hash-only receipt — the CLI path
+        # is not exempt (it was until 2026-10-23; caught by the fleet cleanup).
+        self._write_deletion_receipt(user_id, fact_id, fact.get("content", ""))
         return {"removed": ok, "fact_id": fact_id}
 
     def forget_memory(self, query: str | None = None, fact_id: int | None = None,
