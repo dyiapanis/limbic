@@ -1,5 +1,5 @@
 name: limbic
-version: 0.8.0
+version: 0.9.0
 description: "Self-organising memory system. Opaque, adaptive, self-contained. Modelled on the biological limbic system."
 author: "D Yiapanis"
 kind: exclusive
@@ -26,7 +26,11 @@ notes: |
   Storage: SQLite (limbic.db, WAL mode, sqlite-vec brute-force KNN + FTS5).
   User scoping via WHERE clause on user_id received from host.
   NLI-based correction detection at write time (reconsolidation trigger).
-  No LLM cost — all lifecycle mechanisms are deterministic algorithms.
+  No LLM cost — deterministic machinery with one graded component: a small
+  local NLI cross-encoder whose judgment drives contradiction detection;
+  its call sites are gated by similarity bands and
+  a measured entailment floor, its outputs feed trust penalties and dated
+  links, and no graded output ever executes a removal on its own.
   Embedder-stamp update mechanism: each store records the identity of the
   embedder that produced its vectors; a plugin update that changes the
   embedder marks the store stale until `hermes limbic reindex` re-embeds it.

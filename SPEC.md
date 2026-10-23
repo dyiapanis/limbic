@@ -1,6 +1,6 @@
 # Limbic — Opaque Memory System Specification
 
-**Version 0.8.0** · Author: D Yiapanis · License: PolyForm Noncommercial 1.0.0
+**Version 0.9.0** · Author: D Yiapanis · License: PolyForm Noncommercial 1.0.0
 
 ## Overview
 
@@ -16,7 +16,7 @@ The system is modelled on the brain's limbic system. Each component maps to a br
 - **User-scoped** — user_id filtering enforced at code level on all reads and writes.
 - **Identity-agnostic** — consumes a user_id string and optional user_profile dict from the host. No dependency on any specific identity plugin.
 - **Storage-agnostic** — operates against a storage interface (`LimbicStorage` ABC). SQLite is the storage backend. The brain (hippocampus, amygdala, thalamus) is unchanged across storage implementations.
-- **Zero LLM cost** — no extraction on writes, no reasoning on reads. All lifecycle mechanisms are deterministic algorithms operating on embeddings and scores.
+- **Zero LLM cost** — no extraction on writes, no reasoning on reads. Lifecycle mechanisms are deterministic machinery operating on embeddings and scores, with one graded component: a small local NLI cross-encoder for contradiction detection — similarity-gated call sites, trust-penalty outputs, never an autonomous removal step.
 - **Token-conscious** — every fact in the context block earns its place. Nothing is free-riding. Empty context is valid.
 
 ---
@@ -106,7 +106,6 @@ The agent never sees fact IDs, payloads, or internal state. It said "remember th
 - **Temporal decay** — Ebbinghaus curve; the decay clock resets on retrieval, not on decay application. Decay rate adapts per domain. The operation is **idempotent**: its anchor is the most recent of `last_retrieved`, `created_at`, and the previous decay pass (`updated_at`), so repeated application over an already-charged interval adds nothing. Required because decay runs every turn — anchoring only on `last_retrieved` re-billed the full elapsed interval each pass.
 - **Maturation** (a process, owned here) — silent → retrievable via the activation sigmoid: `1 / (1 + exp(-(hours - adjusted_t_half) / k))`. Retrieval shifts the curve left, so use shortens the silent period. `t_half` adapts toward observed average time-to-maturity.
 - **Atrophy criterion** (a process, owned here) — what makes a fact eligible for removal. The sweep itself runs in the thalamus's maintenance step.
-- **Ignore signal** — measured NO-GO (2026-10-23): an ignore/zero-signal counter over the textual-continuation channel would flag the store's own rulebook, not the junk — standing records and rules never earn textual continuations by nature, so the "flat-trust + hot-riding" cohort measures 0.207 precision against the 0.90 bar (135-fact six-store fixture, `eval/ignore_signal_cohort.json` + `eval/ignore_signal_eval.py`). Not implemented. The measured successor candidate is write-time fragment hygiene (cohort proxy: 1.00 precision / 0.86 recall on the same fixture, fixture-optimism caveat recorded); removal stays with decay, the atrophy sweep, and owner `forget`.
 
 **Adaptive parameters** — decay rate, relevance floor, and the maturation curve drift toward what produces better recall quality. Parameters start at defaults. Adaptation is sample-gated: signal-based moves require ≥10 accumulated signals, maturation-curve moves require ≥5 maturity observations — a handful of observations is noise, not evidence, and below-threshold batches accumulate across cycles instead of being discarded.
 
@@ -1081,7 +1080,7 @@ Concurrent sessions: session-keyed user_id cache with threading.Lock.
 ```yaml
 # plugin.yaml
 name: limbic
-version: 0.8.0
+version: 0.9.0
 description: "Self-organising memory system. Opaque, adaptive, self-contained. Modelled on the biological limbic system."
 author: "D Yiapanis"
 kind: exclusive

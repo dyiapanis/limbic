@@ -412,6 +412,13 @@ class SQLiteStorage(LimbicStorage):
         db.execute("CREATE INDEX IF NOT EXISTS idx_facts_user ON facts(user_id)")
         db.execute("CREATE INDEX IF NOT EXISTS idx_facts_atrophy ON facts(atrophy_marked_at)")
 
+        # negate column retirement: drop wherever earlier schema versions
+        # created it. Idempotent for pre-existing stores.
+        cols = {r["name"] for r in db.execute("PRAGMA table_info(facts)").fetchall()}
+        for legacy in ("negate", "dies_if"):
+            if legacy in cols:
+                db.execute(f"ALTER TABLE facts DROP COLUMN {legacy}")
+
         # FTS5 virtual table for full-text search (external content table)
         db.execute("""
             CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
@@ -516,6 +523,12 @@ class SQLiteStorage(LimbicStorage):
                 value INTEGER NOT NULL DEFAULT 0
             )
         """)
+
+        # Rule-negation tables retired: drop wherever earlier schema versions
+        # created them.
+        db.execute("DROP INDEX IF EXISTS idx_negation_fact")
+        db.execute("DROP TABLE IF EXISTS negation_flags")
+        db.execute("DROP TABLE IF EXISTS rule_death_flags")
 
         self._db.commit()
 
