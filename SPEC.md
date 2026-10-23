@@ -257,7 +257,7 @@ A background scan (`_scan_and_sweep_gated_facts()`) also runs every turn, queryi
 - `atrophy_grace_days` — if operators report accidental loss, grace extends; if storage pressure is high, it shortens
 - `max_atrophy_per_turn` — if compaction pressure is high, the batch size lowers
 
-**This is not pruning.** Pruning is an explicit operator command (`hermes limbic prune`). Atrophy is a metabolic process — the system forgets unused memories the same way a brain forgets them: gradually, irreversibly, and without instruction.
+**This is not pruning.** Pruning is an explicit operator command (`hermes limbic prune`). Atrophy is a metabolic process — the system forgets the memories it no longer recalls the same way a brain forgets them: gradually, irreversibly, and without instruction.
 
 #### Context Injection — What the Thalamus Produces
 

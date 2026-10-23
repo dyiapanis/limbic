@@ -16,7 +16,7 @@ Limbic is inspired by the brain's limbic system:
 - **Hippocampus** (encoding) — `remember()` embeds, checks interference, and stores
 - **Amygdala** (salience) — trust scoring, self-tunes from use
 - **Thalamus** (retrieval) — `recall()` searches and gates by relevance
-- **Atrophy** — unused memories fade and are removed
+- **Atrophy** — memories no longer recalled fade and are removed
 
 The agent sees three tools (`remember`, `recall`, `forget`). The operator sees one file (`limbic.db`). Everything inside is self-organising.
 
@@ -25,7 +25,7 @@ The agent sees three tools (`remember`, `recall`, `forget`). The operator sees o
 - Similar memories compete — newer ones supersede older ones, older ones can block similar new ones
 - Novel facts get a trust boost; familiar ones don't
 - Corrections update trust without ever editing the stored fact
-- Unused memories fade over time and are eventually removed
+- Memories that are no longer recalled fade over time and are eventually removed
 - If nothing relevant exists for a query, recall says so (`no_confident_match`) rather than guessing
 - Relevance thresholds and decay rates tune themselves from use
 - Maturity is handled atomically by SQLite triggers
