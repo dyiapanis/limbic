@@ -128,24 +128,9 @@ python3 ~/.hermes/plugins/limbic/reindex.py --all          # every profile
 **How isolated should memory be?** Pick the weakest boundary that solves your problem:
 
 - **Separate Hermes profiles** — hard isolation, different DBs and agents. Use for different products, tenants, or users who must never share context.
-- **One profile + `users.yaml`** — one agent, one store, a separate memory bucket per user: what you store and recall is always attributed to the person speaking, and the manifest adds display names and guardian semantics. It also runs without the file — every platform account that talks to the agent gets its own bucket automatically, keyed by their platform ID; the manifest only adds those extras.
+- **One profile + `users.yaml`** — one agent, one store, a separate memory bucket per user: what you store and recall is always attributed to the person speaking. The manifest adds display names and guardian semantics (a guardian may write into a ward's scope; others may not) — and its shape is the same whether there are two users or twenty.
 
-The manifest shape is the same whether there are two users or twenty — add or
-remove entries as people come and go; buckets resolve per `user_id`, never per
-configuration edit.
-
-Limbic scopes memories per user automatically. Resolution order for every
-`user_id` the host passes in:
-
-1. **`users.yaml` present** → multi-user mode: canonical buckets, guardian
-   semantics (a guardian may write into a ward's scope; others may not),
-   display names in injected context
-2. **No manifest, one user seen** → single-user mode: all memories attribute
-   to that raw platform ID (scoping still correct — one bucket)
-3. **No manifest, multiple users seen** → each user STILL gets an isolated
-   bucket under their raw ID (full MXID or platform handle — never stripped,
-   `@alice:hs1` ≠ `@alice42:evil.org`), with a log warning that multi-user
-   mode is misconfigured
+Without the manifest the same isolation still happens: every platform account that talks to the agent gets its own bucket, keyed by their full platform ID (`@alice:hs1` ≠ `@alice42:evil.org`; a single user simply sees one bucket). Adding the manifest later is purely additive — buckets resolve per `user_id`, never per configuration edit.
 
 Enable multi-user mode by copying the shipped example next to the plugin code
 (or set `users_manifest:` in `limbic.yaml` to any path):
