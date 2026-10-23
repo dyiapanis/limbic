@@ -59,7 +59,7 @@ Facts are not permanent by default. Limbic manages their lifecycle:
 - **Trust score** — starts at 0.50, rises with retrieval and continuation signals, falls with corrections and interference from newer facts.
 - **Temporal decay** — unretrieved facts slowly decay through an Ebbinghaus forgetting curve. Orphans (never-retrieved facts) eventually fade.
 - **Corrections** — if the user says "no", "wrong", "actually", or "that's not right" about a topic matching a stored fact, that fact's trust is penalised.
-- **Atrophy** — facts below the trust threshold are marked, then physically deleted after a grace period. This is automatic and organic.
+- **Atrophy** — facts below the trust threshold are marked, then physically deleted after the fact's full decay lifetime. This is automatic and organic — judged by nobody, driven purely by the trust score.
 - **No pinning** — durable facts earn no exemption; high trust just means they surface more often while used, and they fade like anything else when they stop being used.
 
 You don't manage this lifecycle. Just write good facts and let Limbic handle the rest.

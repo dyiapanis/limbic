@@ -97,7 +97,6 @@ FORGET_SCHEMA = {
     },
 }
 
-
 def handle_tool_call(provider, tool_name: str, args: dict, session_id: str = "") -> str:
     """Dispatch tool calls to the provider."""
     try:
