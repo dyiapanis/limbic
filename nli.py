@@ -236,6 +236,35 @@ class LimbicNLI:
             logger.warning("limbic NLI: classification failed: %s", e)
             return "neutral"  # safe default — no correction on error
 
+    def classify_scores(self, premise: str, hypothesis: str) -> dict[str, float]:
+        """Full probability distribution — {label: prob}.
+
+        The argmax label is `classify()`; this is the graded surface for
+        threshold-gated consumers (they read probs["entailment"] against
+        an internal τ). Not cached: only the argmax label is cached.
+        """
+        if not premise or not hypothesis:
+            return {l: 0.0 for l in LABELS} | {"neutral": 1.0}
+        self._ensure_model()
+        try:
+            import numpy as np
+
+            encoding = self._tokenizer.encode(premise, hypothesis)
+            input_ids = np.array([encoding.ids], dtype=np.int64)
+            attention_mask = np.array([encoding.attention_mask], dtype=np.int64)
+            outputs = self._session.run(
+                None,
+                {"input_ids": input_ids, "attention_mask": attention_mask},
+            )
+            logits = outputs[0]
+            exp_logits = np.exp(logits - np.max(logits, axis=-1, keepdims=True))
+            probs = exp_logits / np.sum(exp_logits, axis=-1, keepdims=True)
+            return {self._label_map.get(i, LABELS[i]): float(probs[0][i])
+                    for i in range(len(probs[0]))}
+        except Exception as e:
+            logger.warning("limbic NLI: scored classification failed: %s", e)
+            return {l: 0.0 for l in LABELS} | {"neutral": 1.0}
+
     @property
     def available(self) -> bool:
         """Check if the model can be loaded (without actually loading it)."""

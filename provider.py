@@ -355,6 +355,7 @@ class LimbicMemoryProvider(MemoryProvider):
         # Older facts NLI flagged as contradicted by this write. The link cannot
         # be written here — this fact has no fact_id until store() below.
         contradicted_ids: list[int] = []
+        p_entail = 0.0               # graded above tau — recorded in the evidence log
 
         # Correction cue is content-constant — evaluate once, not per
         # similar-fact iteration (delegate review deleg_8b449d32 amendment).
