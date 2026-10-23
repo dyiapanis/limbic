@@ -1,7 +1,7 @@
 """Supersession (#19) — recall prefers an open correction over the fact it
 corrects, when both sides clear the relevance floor for the query.
 
-Stub-driven like test_associative_edges_provider: real LimbicMemoryProvider
+Stub-driven: real LimbicMemoryProvider
 ._search over storage doubles. Storage-contract details live in
 test_contradictions.py.
 """
@@ -71,12 +71,6 @@ class _FakeStorage:
 
     def get_embedding(self, fact_id):
         return None
-
-    def edge_neighbours(self, fact_id, pool_ids, user_id):
-        return {}
-
-    def reinforce_edges(self, fact_ids, user_id):
-        pass
 
     def open_supersessions(self, fact_ids):
         pool = set(fact_ids)
