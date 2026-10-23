@@ -657,6 +657,7 @@ class SQLiteStorage(LimbicStorage):
                     "updated_at": r["updated_at"],
                     "embedding": None,
                     "score": score,
+                    "vector_score": score,  # declared at the source: real cosine
                     "atrophy_marked_at": r["atrophy_marked_at"],
                 })
 
@@ -1145,6 +1146,7 @@ class SQLiteStorage(LimbicStorage):
                     "updated_at": r["updated_at"],
                     "embedding": None,
                     "score": r["fts_score"],
+                    "vector_score": None,  # explicit absence: BM25 is not a cosine
                     "atrophy_marked_at": r["atrophy_marked_at"],
                 })
 
@@ -1253,6 +1255,7 @@ class SQLiteStorage(LimbicStorage):
                     "updated_at": r["updated_at"],
                     "embedding": None,
                     "score": 0.0,
+                    "vector_score": None,  # explicit absence: graph lane has no cosine
                     "atrophy_marked_at": r["atrophy_marked_at"],
                 })
 

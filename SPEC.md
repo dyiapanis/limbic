@@ -366,10 +366,12 @@ manually. Tool contract: execute only on the user's explicit request. Every
 deletion appends a hash-only tombstone receipt (`limbic.db.deletions.jsonl`,
 0600): `{ts, user_id, fact_id, content_sha256, content_chars}` — the content
 itself is never retained, so removing a secret is not undone by its own audit
-trail. `created_at`/`trust_score` surface only inside this review flow, never
-in recall results or injected context. Guardian relationships are read-only
-here: a guardian can recall a guarded user's memories but cannot delete them —
-removal stays own-data only.
+trail. The receipt file is append-only and grows with use; it holds no
+content — only hashes and ids — and can be trimmed or deleted at any time
+without affecting the store. `created_at`/`trust_score` surface only inside
+this review flow, never in recall results or injected context. Guardian
+relationships are read-only here: a guardian can recall a guarded user's
+memories but cannot delete them — removal stays own-data only.
 
 The agent tunes the system through interaction:
 - "Remember that I'm vegan" → fact stored, starts maturing

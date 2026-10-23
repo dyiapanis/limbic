@@ -2,6 +2,9 @@
 """Recall-confidence gate (no_confident_match abstention) — read-side metacognition."""
 import os
 import sys
+
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
 
@@ -15,6 +18,9 @@ class _FakeTrust:
         if name == "relevance_floor":
             return 0.25
         return 0.0
+
+    def compute_activation(self, created_at, retrieval_count):
+        return 0.9  # active
 
 
 def _provider_with_results(scores):
@@ -151,3 +157,83 @@ def test_high_relevance_new_fact_rescued_from_silent_pool():
     by_id = {f["fact_id"]: f for f in facts}
     assert "relevance" in by_id[2], "high-relevance new fact not surfaced (still silent-pooled)"
     assert by_id[2]["relevance"] == 0.534
+
+
+def test_fts_only_fact_rescued_by_computed_cosine():
+    """Regression: _rrf_fuse once copied the rank score into vector_score for
+    FTS-only facts — the gate's `is None` check never fired, the cosine recompute
+    was dead code, and every keyword-only hit gated out (negative BM25 read as a
+    cosine). Rows must declare vector_score at the source; the fuse must never
+    infer it; the gate must compute the true cosine for the FTS-only fact."""
+    from limbic.provider import LimbicMemoryProvider
+
+    p = LimbicMemoryProvider()
+    p._initialised = True
+    p._trust = _FakeTrust()
+    p._session_guardian_of = {}
+    p._get_user_id = lambda sid: "u1"
+    p._config = {}
+
+    fts_row = {"fact_id": 7, "content": "the c6 landing clip", "user_id": "u1",
+               "trust_score": 0.5, "retrieval_count": 0, "last_retrieved": None,
+               "matured_at": None, "created_at": "2026-10-20",
+               "updated_at": "2026-10-20", "embedding": None,
+               "score": -2.5, "vector_score": None, "atrophy_marked_at": None}
+    p._storage = type("S", (), {
+        "search": staticmethod(lambda embedding, filters, limit: []),
+        "search_fts": staticmethod(lambda query_text, filters, limit: [fts_row]),
+        "search_graph": staticmethod(lambda names, filters, limit: []),
+        "get_embedding": staticmethod(lambda fid: stored.tolist() if fid == 7 else None),
+    })()
+    import numpy as _np
+    qv = _np.zeros(1024, dtype=_np.float32); qv[0] = 1.0
+    # unit-norm direction whose cosine vs the query is exactly 0.6 (3-4-5)
+    stored = _np.zeros(1024, dtype=_np.float32); stored[0] = 0.6; stored[1] = 0.8
+    p._embedder = type("E", (), {"embed": staticmethod(
+        lambda q, is_query=False: qv.tolist())})
+    p._cosine_distance = staticmethod(
+        lambda a, b: 1.0 - float(_np.dot(a, b) / (_np.linalg.norm(a) * _np.linalg.norm(b) + 1e-12)))
+
+    facts = LimbicMemoryProvider._search(p, "c6 landing", "u1")
+    by_id = {f["fact_id"]: f for f in facts}
+    assert "relevance" in by_id[7], (
+        "keyword-only fact gated out — fuse leaked the rank into vector_score")
+    assert by_id[7]["relevance"] == pytest.approx(0.6), "rescue must use the computed cosine"
+
+
+def test_fts_only_abstain_lane_labeled_fts():
+    """Regression: the abstain lane must read a source-declared cosine, not an
+    inferred one — an FTS-only near-miss is lane 'fts', never 'vector'."""
+    from limbic.provider import LimbicMemoryProvider
+
+    p = LimbicMemoryProvider()
+    p._initialised = True
+    p._trust = _FakeTrust()
+    p._session_guardian_of = {}
+    p._get_user_id = lambda sid: "u1"
+    p._config = {}
+
+    fts_row = {"fact_id": 7, "content": "the c6 landing clip", "user_id": "u1",
+               "trust_score": 0.5, "retrieval_count": 3, "last_retrieved": None,
+               "matured_at": "2026-10-01", "created_at": "2026-10-01",
+               "updated_at": "2026-10-01", "embedding": None,
+               "score": -2.5, "vector_score": None, "atrophy_marked_at": None}
+    p._storage = type("S", (), {
+        "search": staticmethod(lambda embedding, filters, limit: []),
+        "search_fts": staticmethod(lambda query_text, filters, limit: [fts_row]),
+        "search_graph": staticmethod(lambda names, filters, limit: []),
+        "get_embedding": staticmethod(lambda fid: stored.tolist() if fid == 7 else None),
+    })()
+    import numpy as _np
+    qv = _np.zeros(1024, dtype=_np.float32); qv[0] = 1.0
+    # unit-norm direction whose cosine vs the query is exactly 0.3 (below the floor)
+    stored = _np.zeros(1024, dtype=_np.float32); stored[0] = 0.3; stored[1] = 0.9539392014169457
+    p._embedder = type("E", (), {"embed": staticmethod(
+        lambda q, is_query=False: qv.tolist())})
+    p._cosine_distance = staticmethod(
+        lambda a, b: 1.0 - float(_np.dot(a, b) / (_np.linalg.norm(a) * _np.linalg.norm(b) + 1e-12)))
+
+    out = p.recall("c6 landing", session_id="s")
+    assert out["status"] == "no_confident_match"
+    assert out["path"] == "fts", (
+        "abstain lane must not read the BM25 rank as a cosine")
