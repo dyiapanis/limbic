@@ -60,7 +60,6 @@ def make_provider(tmp_path, nli_label="contradiction", max_per_turn=3):
     p._centroid_writes = 0
     p._centroid_cache_hits = 0
     p._centroid_cache_misses = 0
-    p._last_recall_count = 0
     p._atrophy_marked_count = 0
     p._atrophy_swept_count = 0
     # isolate the unit under test from unrelated collaborators
