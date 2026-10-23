@@ -1105,18 +1105,13 @@ class LimbicMemoryProvider(MemoryProvider):
         return f"<limbic-context>\n{context}\n</limbic-context>"
 
     def recall_status(self) -> Optional[RecallStatus]:
-        """Number of facts injected in the last prefetch, for the UI indicator.
+        """Permanently muted — nothing to see here.
 
-        Controlled by ``recall_indicator`` (limbic.yaml, default false — the
-        "🧠 limbic — recalled N memories" chat line is off unless opted in;
-        Demetri 2026-10-10). Memory injection itself is unaffected.
+        The old "🧠 limbic — recalled N memories" chat line is redundant:
+        Hermes surfaces tool calls natively. Method kept because the
+        MemoryManager contract calls it; it now always returns None.
         """
-        if not self._config.get("recall_indicator", False):
-            return None
-        n = self._last_recall_count
-        if n <= 0:
-            return None
-        return RecallStatus(provider_label="limbic", count=n)
+        return None
 
     # ── Trust signals (Amygdala feedback) ──────────────────────────
 
@@ -1909,11 +1904,6 @@ class LimbicMemoryProvider(MemoryProvider):
                 "default": 1024,
             },
             {
-                "key": "recall_indicator",
-                "description": "Emit an inline recall indicator line before replies when memory was injected. Default off.",
-                "default": False,
-            },
-            {
                 "key": "context_budget",
                 "description": "Max facts injected per turn (ceiling, not target).",
                 "default": 20,
@@ -1962,10 +1952,6 @@ class LimbicMemoryProvider(MemoryProvider):
             config["context_budget"] = values["context_budget"]
         if "associative_link_boost" in values:
             config["associative_link_boost"] = values["associative_link_boost"]
-        # Pre-existing gap surfaced in review: recall_indicator was dropped
-        # the same way — both flat keys must round-trip through save_config.
-        if "recall_indicator" in values:
-            config["recall_indicator"] = values["recall_indicator"]
         if "known_users" in values:
             config["known_users"] = [u.strip() for u in str(values["known_users"]).split(",") if u.strip()]
         if "known_entities" in values:
