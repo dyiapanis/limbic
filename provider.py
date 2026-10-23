@@ -72,7 +72,6 @@ class LimbicMemoryProvider(MemoryProvider):
         self._centroid_cache_misses = 0
         self._atrophy_marked_count = 0
         self._atrophy_swept_count = 0
-        self._last_recall_count = 0  # for recall_status() UI indicator
         self._component_scores: dict[str, list[float]] = {   # embedding/trust/activation contributions
             "embedding": [], "trust": [], "activation": []
         }
@@ -1067,9 +1066,6 @@ class LimbicMemoryProvider(MemoryProvider):
         # Keep only last 1000 measurements (rolling window ~1 day at 50 turns)
         if len(self._prefetch_latencies) > 1000:
             self._prefetch_latencies = self._prefetch_latencies[-1000:]
-
-        # Stash injected fact count for recall_status() UI indicator
-        self._last_recall_count = max(0, len(context_parts) - 2)
 
         return f"<limbic-context>\n{context}\n</limbic-context>"
 
