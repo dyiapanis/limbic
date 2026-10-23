@@ -13,5 +13,8 @@
   "floor_rationale": "false-answer tops measured 0.42-0.44 at 100 facts, inside the old empty gap; 0.50 clears the lookalike band by ~0.06 and stays ~0.13 under the answerable minimum - better silent than false (see trust.py)",
   "watch": "stats()['recall']['abstention_rate'] - cumulative counter since install; a sustained rise means the floor, store, or embedder drifted",
   "re_measure_when": "any production store doubles its fact count, or the embedder changes (embedder-stamp guard fires)",
-  "history_note": "pre-0.7.0 harness runs measured 6/30 abstain on an earlier corpus revision; corpus and gate both changed since (supersession-at-recall, sample-gating fix) - numbers are not comparable across that boundary"
+  "history_note": "pre-0.7.0 harness runs measured 6/30 abstain on an earlier corpus revision; corpus and gate both changed since (supersession-at-recall, sample-gating fix) - numbers are not comparable across that boundary",
+  "verified": [
+    {"when": "2026-10-23", "what": "re-measure after the recall-gate fix (BM25 no longer leaks into vector_score, keyword-only rows rescue-path corrected) - corpus numbers unchanged (raw 0.8222 / hit@1 0.8 / gated 0.7368, 15/30 abstain, deterministic x2); record stands"}
+  ]
 }
