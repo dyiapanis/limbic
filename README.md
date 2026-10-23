@@ -128,7 +128,7 @@ python3 ~/.hermes/plugins/limbic/reindex.py --all          # every profile
 
 - **Separate Hermes profiles** — hard isolation, different DBs and agents. Use for different products, tenants, or users who must never share context.
 - **One profile + `users.yaml`** — one agent, one store, with a separate memory bucket per user: the facts you store and the context you get are always attributed to the person speaking. Use when two or more people share one agent who should know them as individuals — the manifest also adds display names and guardian semantics.
-- **No manifest (trial mode)** — nothing to configure: every platform account that talks to the agent still gets its own bucket automatically, keyed by their platform ID. You give up display names and guardians, nothing else — and the upgrade is safe: add the manifest later and the existing buckets carry over untouched.
+- **Shared store, no manifest** — the same store still isolates automatically: every platform account that talks to the agent gets its own bucket, keyed by their platform ID. Use when you want memory isolation without maintaining an identity file — the cost is display names and guardians.
 
 The manifest shape is the same whether there are two users or twenty — add or
 remove entries as people come and go; buckets resolve per `user_id`, never per
