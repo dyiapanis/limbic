@@ -619,13 +619,12 @@ class LimbicMemoryProvider(MemoryProvider):
         for fid, rrf_score in sorted_ids:
             fact = facts_by_id.get(fid)
             if fact:
-                # Preserve the raw cosine similarity before RRF overwrites
-                # `score`. RRF is a RANK score (~0.016-0.033) on a completely
-                # different scale to cosine (~0.0-1.0); the relevance gate
-                # needs the cosine, the ordering needs the RRF score.
-                # FTS-only facts never had a cosine — leave vector_score unset.
-                if rrf_score is not None:
-                    fact.setdefault("vector_score", fact.get("score"))
+                # `score` becomes the RRF rank (~0.016-0.033 rank scale); relevance
+                # stays on the cosine scale via `vector_score`, DECLARED AT THE
+                # SOURCE (search rows carry the true cosine, fts/graph rows carry
+                # None). Never inferred here — copying the rank into vector_score
+                # would mislabel the abstain lane AND disable the gate's cosine
+                # recompute for FTS-only facts (negative BM25 read as a cosine).
                 fact["score"] = rrf_score  # ranking score from RRF
                 result.append(fact)
 
