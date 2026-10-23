@@ -25,7 +25,7 @@ The agent sees three tools (`remember`, `recall`, `forget`). The operator sees o
 - Similar memories compete — newer ones supersede older ones, older ones can block similar new ones
 - Novel facts get a trust boost; familiar ones don't
 - Corrections update trust without ever editing the stored fact
-- Atrophy — memories superseded, contradicted and unused fade and are progressively forgotten.
+- A background sweep removes memories that have faded beyond recall.
 - If nothing relevant exists for a query, recall says so (`no_confident_match`) rather than guessing
 - Relevance thresholds and decay rates tune themselves from use
 - Maturity is handled atomically by SQLite triggers
