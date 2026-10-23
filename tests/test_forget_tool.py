@@ -155,3 +155,20 @@ def test_fts_fallback_when_embedder_gone(provider, monkeypatch):
     out = provider.forget_memory(query="lighthouse keeper", user_id="alice")
     assert out["status"] == "candidates"
     assert fid in [c["fact_id"] for c in out["candidates"]]
+
+def test_forget_fact_cli_path_also_writes_receipt(provider, tmp_path):
+    """The CLI's direct delete path must satisfy the same receipt invariant
+    as the two-step forget tool (caught missing during the 2026-10-23 fleet
+    cleanup — 28 CLI deletes had shipped with no tombstones)."""
+    content = "cli-path receipt check: fleet rule number nine"
+    fid = provider.remember(content, user_id="alice")["fact_id"]
+    out = provider.forget_fact(fid, user_id="alice")
+    assert out["removed"] is True
+
+    rp = _receipt_path(provider)
+    assert os.path.exists(rp)
+    line = json.loads(open(rp).read().strip().splitlines()[-1])
+    assert line["user_id"] == "alice"
+    assert line["fact_id"] == fid
+    assert line["content_sha256"] == hashlib.sha256(content.encode()).hexdigest()
+    assert content not in open(rp).read()  # no content retained
