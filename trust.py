@@ -50,6 +50,10 @@ DEFAULT_PARAMS = {
     # (re-measure when a store doubles or the embedder changes).
     "recall_confidence_floor": {"value": 0.50, "min": 0.30, "max": 0.60},
     "interference_penalty": {"value": 0.20, "min": 0.02, "max": 0.25},
+    # Interference floor (L1, plan 2026-10-24): a NEUTRAL-band dock is a guess
+    # that a newer write replaces the old; the guess must not grave the fact.
+    # Dock clamps at this floor (dock can never push below it, never raises).
+    "interference_floor":   {"value": 0.25, "min": 0.10, "max": 0.50},
     "surprise_boost":       {"value": 0.10, "min": 0.02, "max": 0.20},
     "surprise_percentile":  {"value": 0.90, "min": 0.80, "max": 0.99},
     # Atrophy — facts are swept only when trust has fully decayed to zero
@@ -163,6 +167,9 @@ class TrustEngine:
 
     def interference_penalty_value(self) -> float:
         return self.get("interference_penalty")
+
+    def interference_floor_value(self) -> float:
+        return self.get("interference_floor")
 
     def surprise_boost_value(self) -> float:
         return self.get("surprise_boost")
