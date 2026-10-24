@@ -807,7 +807,8 @@ class SQLiteStorage(LimbicStorage):
         """
         with self._lock:
             rows = self._db.execute(
-                """SELECT fact_id, trust_score, last_retrieved, created_at, updated_at
+                """SELECT fact_id, trust_score, retrieval_count, last_retrieved,
+                           created_at, updated_at, atrophy_marked_at
                    FROM facts WHERE user_id = ?""",
                 (user_id,)
             ).fetchall()
