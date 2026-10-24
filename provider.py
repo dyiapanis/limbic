@@ -293,10 +293,36 @@ class LimbicMemoryProvider(MemoryProvider):
         if uid is None:
             return {"error": "No user_id resolved"}
 
+        # L3 (plan 2026-10-24): unresolved/garbage ids must not become memory
+        # buckets (audit: 4 facts stored under user_id='6'). A manifest-known
+        # canonical or a well-formed MXID passes; anything else resolves to
+        # the current session user instead of minting a junk bucket.
+        if uid and uid != "general" and not uid.startswith("@"):
+            manifest = getattr(self, "_manifest", None)
+            if manifest is not None:
+                known = {c.lower() for c in manifest.canonical_names}
+                if uid.lower() not in known:
+                    fallback = self._current_user_id
+                    if fallback:
+                        logger.warning(
+                            "limbic: remember uid %r not in manifest — attributing to %s",
+                            uid, fallback)
+                        uid = fallback
+
         # Reject ephemeral date facts — they go stale and cause confusion
         if self._is_ephemeral_date_fact(content):
             logger.info("limbic: rejected ephemeral date fact (fact_id none, len=%d)", len(content))
             return {"status": "rejected_ephemeral_date", "reason": "Date facts go stale — the system prompt provides the current date."}
+
+        # L3 (plan 2026-10-24): host-frame junk gate — the gateway's own
+        # session framing must never be stored as a fact. Mechanical: this is
+        # OUR literal wrapper text, not a content classification.
+        for frame in ("[OUT-OF-BAND USER MESSAGE", "[CONTEXT COMPACTION",
+                      "delivered once at this position"):
+            if frame in content:
+                logger.info("limbic: rejected host-frame text (len=%d)", len(content))
+                return {"status": "rejected_host_frame",
+                        "reason": "session framing text is not a fact"}
 
         # ponytail: fragment gate — both conditions must fail to reject.
         # words<3 catches the real junk (1-2 word steering/ack messages:
@@ -430,8 +456,15 @@ class LimbicMemoryProvider(MemoryProvider):
                 if similarity > 0.85:
                     # High similarity but not contradictory or entailing —
                     # the new fact is probably a newer version of the same thing.
-                    # Apply interference penalty.
-                    new_trust = max(0.0, old_trust - self._trust.interference_penalty_value())
+                    # Apply interference penalty — floored (L1): a neutral-band
+                    # dock is a guess, and the guess must not grave the fact.
+                    # min(old, floor) keeps the dock from ever RAISING a fact
+                    # already below the floor.
+                    pen = self._trust.interference_penalty_value()
+                    new_trust = max(
+                        min(old_trust, self._trust.interference_floor_value()),
+                        old_trust - pen,
+                    )
                     self._storage.update(existing["fact_id"], trust_score=new_trust)
                     self._check_organic_atrophy(
                         existing["fact_id"], new_trust,
@@ -1011,26 +1044,14 @@ class LimbicMemoryProvider(MemoryProvider):
                 self._session_buffer.pop(next(iter(self._session_buffer)))
             self._session_buffer[session_id] = list(injected_ids)
 
-        # Step 4b: Mark atrophy candidates — facts with trust below threshold
-        # These are NOT injected facts; we check all scored facts from the search
-        if self._storage:
-            for fact in results:
-                trust_score = fact.get("trust_score", 0.5)
-                if self._trust.is_atrophy_candidate(
-                    trust_score=trust_score,
-                    last_retrieved=fact.get("last_retrieved"),
-                ):
-                    # Only mark if not already marked
-                    if not fact.get("atrophy_marked_at"):
-                        self._storage.mark_atrophy(fact["fact_id"])
-                        self._atrophy_marked_count += 1
-                        logger.debug("limbic: marked fact %d for atrophy (trust=%.3f)",
-                                     fact["fact_id"], trust_score)
+        # Step 4b: REMOVED (L2, plan 2026-10-24) — atrophy marking lives solely
+        # in `_apply_temporal_decay`'s full-scan loop, which sees every fact of
+        # the user; the recall-results marking here could never see facts that
+        # stopped matching queries (the "sweeper blind" bug).
 
         # Step 5: Trust engine tick (includes atrophy sweep)
         self._trust.tick()
         self._apply_temporal_decay(uid)
-        self._scan_and_sweep_gated_facts(uid)
         self._sweep_atrophy(uid)
         self._recheck_contradictions(uid)
 
@@ -1244,8 +1265,20 @@ class LimbicMemoryProvider(MemoryProvider):
         try:
             # Fetch all facts with their timestamps
             rows = self._storage.decay_rows(user_id)
-
+            if not rows:
+                return
+            # L1/L2 (plan 2026-10-24): this loop is the ONLY per-turn full scan
+            # over the user's facts — it owns atrophy marking AND the filtered
+            # heal rule, replacing the old recall-results marking and
+            # _scan_and_sweep_gated_facts (both deleted; one site, one owner).
+            open_ids = set(
+                self._storage.open_supersessions(
+                    [row["fact_id"] for row in rows]
+                ).keys()
+            )
             decayed = 0
+            healed = 0
+            marked = 0
             for row in rows:
                 old_trust = row.get("trust_score", 0.5)
                 last_retrieved = row.get("last_retrieved")
@@ -1259,10 +1292,42 @@ class LimbicMemoryProvider(MemoryProvider):
                     decayed_at=row.get("updated_at"),
                 )
 
+                # L1 heal rule (reviewer-accepted, filtered): repair trust
+                # gravestones — facts retrieved heavily but ground down by
+                # pre-floor interference docks — ONLY when no contradiction
+                # still stands against the fact (fact 1302 class: open link,
+                # must NOT recover). Contradiction-penalized facts stay low.
+                if (
+                    new_trust < 0.10
+                    and row.get("retrieval_count", 0) >= 10
+                    and row["fact_id"] not in open_ids
+                ):
+                    new_trust = max(0.30, new_trust)
+                    healed += 1
+                    logger.info(
+                        "limbic: healed gravestone fact %d → %.2f (r=%d, no open contradictions)",
+                        row["fact_id"], new_trust, row.get("retrieval_count", 0),
+                    )
+
+                # L2: mark atrophy candidates here, where every fact of the
+                # user is visible — the old recall-results marking could never
+                # see facts that had stopped matching queries.
+                if (
+                    not row.get("atrophy_marked_at")
+                    and self._trust.is_atrophy_candidate(
+                        trust_score=new_trust,
+                        last_retrieved=last_retrieved,
+                        created_at=created_at,
+                    )
+                ):
+                    self._storage.mark_atrophy(row["fact_id"])
+                    marked += 1
+
                 # Only write if the value actually changed (avoid unnecessary DB writes)
                 # Do NOT stamp last_retrieved here — decay is a metabolic process,
                 # not a retrieval. The decay clock should only reset when a fact
                 # actually surfaces in search results (real retrieval = reactivation).
+                # mark_atrophy stamps its own atrophy_marked_at inside the store.
                 if abs(new_trust - old_trust) > 0.001:
                     self._storage.update(
                         row["fact_id"],
@@ -1272,51 +1337,10 @@ class LimbicMemoryProvider(MemoryProvider):
 
             if decayed:
                 logger.debug("limbic: applied temporal decay to %d facts (user=%s)", decayed, user_id)
+            if healed or marked:
+                logger.info("limbic: decay pass healed=%d newly_marked=%d (user=%s)", healed, marked, user_id)
         except Exception as e:
             logger.debug("limbic: temporal decay failed: %s", e)
-
-    def _scan_and_sweep_gated_facts(self, user_id: str):
-        """Background scan: find facts below the trust threshold, mark them
-        for atrophy, and let the sweep handle deletion. trust_score already
-        includes temporal decay (applied by _apply_temporal_decay), so this
-        query catches both correction-driven and time-driven decay.
-        """
-        if not self._storage or not self._trust:
-            return
-        try:
-            threshold = self._trust.atrophy_threshold()
-            max_per_turn = self._trust.max_atrophy_per_turn()
-
-            # Facts below threshold, not yet marked
-            rows = self._storage.atrophy_scan_rows(
-                user_id, threshold, max_per_turn
-            )
-
-            marked = 0
-            for row in rows:
-                trust = row.get("trust_score", 0.5)
-                # NOTE: created_at must be passed by KEYWORD only. Passing it
-                # positionally as well raises TypeError, which the except arm
-                # below swallowed at DEBUG level — so the background scan
-                # silently never marked anything. The two foreground paths
-                # (search results, post-penalty) always used keywords.
-                if self._trust.is_atrophy_candidate(
-                    trust_score=trust,
-                    last_retrieved=row.get("last_retrieved"),
-                    created_at=row.get("created_at"),
-                ):
-                    self._storage.mark_atrophy(row["fact_id"])
-                    marked += 1
-                    logger.debug(
-                        "limbic: background scan marked fact %d for atrophy (trust=%.3f)",
-                        row["fact_id"], trust
-                    )
-
-            if marked:
-                self._atrophy_marked_count += marked
-                logger.info("limbic: background scan marked %d facts for atrophy (user=%s)", marked, user_id)
-        except Exception as e:
-            logger.debug("limbic: background atrophy scan failed: %s", e)
 
     def _sweep_atrophy(self, user_id: str):
         """Sweep facts marked for atrophy whose grace period has elapsed.
