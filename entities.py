@@ -12,17 +12,22 @@ Language handling:
     (no word lists, no hardcoded language pairs).
   - Unconfigured-language content falls back to the first loaded pipeline.
 
-The plugin ships with no spaCy model bundled and DOES NOT auto-download
-(runtime installs would bypass the dependency manager). Install the model
-once per environment: `python -m spacy download en_core_web_sm` (~14.5MB).
-Until then, entity extraction is disabled — reflected in provider status
-(`entity_extraction: disabled`) and repairable post-hoc via the
-`entities-backfill` CLI.
+Vendored pipeline: the `en` model ships inside this plugin at
+`models/en_core_web_sm/` (spaCy's own MIT-licensed wheel, unpacked — see
+`models/en_core_web_sm/LICENSE`). Nothing to install: entity extraction works
+on a fresh install, offline, with no package manager involvement.
+
+Other languages (fr, de, el …) are still opt-in and are NOT bundled:
+`hermes limbic languages --set <langs>` saves the config and downloads each
+model into the dependency environment. A language whose model is missing
+degrades silently to no extraction for that language — reflected in provider
+status (`entity_extraction`) and repairable post-hoc via `entities-backfill`.
 """
 from __future__ import annotations
 
 import logging
 import unicodedata
+from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -55,6 +60,17 @@ _SCRIPT_RANGES: list[tuple[str, int, int]] = [
     ("ja", 0x3040, 0x30FF),
     ("ja", 0x4E00, 0x9FFF),
 ]
+
+
+def _model_path(model: str) -> str:
+    """What to hand ``spacy.load`` for *model*.
+
+    The plugin vendors the English pipeline as data (``models/<model>/``), so a
+    fresh install needs no download at all; anything else resolves by package
+    name out of the dependency environment.
+    """
+    vendored = Path(__file__).resolve().parent / "models" / model
+    return str(vendored) if (vendored / "meta.json").is_file() else model
 
 
 class EntityExtractor:
@@ -99,12 +115,11 @@ class EntityExtractor:
                     self._pipelines[lang] = nlp
                     logger.info("limbic: spaCy model loaded: %s", model)
             except Exception as e:
-                # Model not installed — do NOT auto-download. Runtime pip installs bypass
-                # the plugin dependency manager and pin mutable sources. Log the fix instead.
+                # en ships vendored; any other language's model must be installed. Never
+                # download from here — log the fix instead (see `hermes limbic languages`).
                 logger.warning(
-                    "limbic: spaCy model %s not installed — entity extraction for '%s' disabled. "
-                    "Install manually: %s -m spacy download %s", model, lang,
-                    __import__("sys").executable, model)
+                    "limbic: spaCy model %s not available — entity extraction for '%s' disabled. "
+                    "Install with: hermes limbic languages --set %s", model, lang, lang)
 
         if self._pipelines:
             self._available = True
@@ -112,11 +127,15 @@ class EntityExtractor:
             logger.warning("limbic: no spaCy models loaded — entity extraction disabled")
 
     def _load_model(self, model: str):
-        """Load a spaCy model and add the custom EntityRuler."""
+        """Load a spaCy model and add the custom EntityRuler.
+
+        The bundled model is loaded from its vendored directory; any other
+        language falls back to the installed package name.
+        """
         import spacy
         from spacy.pipeline import EntityRuler
 
-        nlp = spacy.load(model)
+        nlp = spacy.load(_model_path(model))
         ruler = nlp.add_pipe("entity_ruler", before="ner")
         patterns = KNOWN_PATTERNS if not self._known_patterns else self._known_patterns
         if patterns:
