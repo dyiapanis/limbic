@@ -2,7 +2,7 @@
 
 Self-Organising Memory for AI Agents
 
-**Version 0.9.1**
+**Version 0.9.2**
 Author: D Yiapanis · License: PolyForm Noncommercial 1.0.0 (source-available; commercial use requires a separate license)
 
 Limbic is a self-organising local memory system for AI agents. It stores facts, learns which ones matter through interaction, and surfaces the right context at the right time — without ever calling an LLM. Designed for [Hermes Agent](https://hermes-agent.nousresearch.com) and implements the upstream `MemoryProvider` ABC.
@@ -43,7 +43,7 @@ The agent sees three tools (`remember`, `recall`, `forget`). The operator sees o
 
 ```bash
 hermes plugin install limbic
-hermes limbic setup   # downloads models (~1GB + en NER) with progress
+hermes limbic setup   # pre-downloads the ~1GB ONNX models with progress
 ```
 
 First `remember()` also triggers the same download lazily — `Downloading models…` appears in chat — but `setup` pre-warms with a bar so the first use is instant.
@@ -228,7 +228,7 @@ See [SPEC.md](./SPEC.md) for the full architecture — data model, lifecycle mec
 Hermes Agent runs at 1 GB RAM / 1 CPU / 500 MB disk. Limbic adds:
 
 - **RAM (per profile):** ~700 MB resident once the memory is active — each profile loads its own ONNX embedder session; sessions are not shared across profiles. The NLI cross-encoder loads lazily on the first contradiction check and adds to that.
-- **Disk (shared):** ~1 GB model cache, downloaded once for ALL profiles (Arctic int8 ~570 MB + NLI ~430 MB + spaCy `en_core_web_sm` ~50 MB). Per profile, the only growth is `limbic.db` — a few MB per 1,000 memories.
+- **Disk (shared):** ~1 GB model cache, downloaded once for ALL profiles (Arctic int8 ~570 MB + NLI ~430 MB). The English NER pipeline ships inside the plugin (~15 MB, no download). Per profile, the only growth is `limbic.db` — a few MB per 1,000 memories.
 - **CPU (shared):** 2 cores recommended. Embedding is ~17–19 ms int8 ONNX on CPU (measured on a minimalist non-GPU server); the NLI gate runs at write time only. No GPU.
 
 See SPEC.md §Performance budget / §Scale projections for measured numbers.
