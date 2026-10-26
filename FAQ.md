@@ -30,7 +30,7 @@ Runs on a minimalist 2-core, non-GPU server: embedding is int8 ONNX on CPU, NLI 
 - **tokenizers/sentencepiece** — tokenizer runtime
 - **numpy** — vector math
 - **sqlite3** — storage (stdlib)
-- **spacy** — entity extraction (optional, per-language models via `hermes limbic setup`)
+- **spacy** — entity extraction. The English pipeline ships with the plugin (vendored, no download); other languages install via `hermes limbic languages --set <langs>`.
 
 No network calls after the one-time model download; models are sha-pinned.
 
