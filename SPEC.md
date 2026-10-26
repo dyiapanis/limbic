@@ -1,6 +1,6 @@
 # Limbic — Opaque Memory System Specification
 
-**Version 0.9.1** · Author: D Yiapanis · License: PolyForm Noncommercial 1.0.0
+**Version 0.9.2** · Author: D Yiapanis · License: PolyForm Noncommercial 1.0.0
 
 ## Overview
 
@@ -686,7 +686,7 @@ CREATE TABLE IF NOT EXISTS contradictions (
 );
 ```
 
-Entity extraction runs on every `remember()` call via spaCy NER. Language pipelines are config-driven (`nlp.languages`, default English). spaCy models are not auto-installed — they install once per environment by wheel (see README Quick Start step 1), and `status` reports `entity_extraction: disabled` when a configured language's model is absent. A custom EntityRuler adds deterministic patterns for known entities (user names, project names, products) that statistical NER misses. Graph traversal in `search_graph()` finds all fact_ids linked to query-extracted entities, merged into the retrieval candidate pool alongside vector and FTS5 results.
+Entity extraction runs on every `remember()` call via spaCy NER. Language pipelines are config-driven (`nlp.languages`, default English). The English pipeline (`en_core_web_sm`) ships vendored inside the plugin at `models/en_core_web_sm/` and is loaded straight from that directory — no install step, no download, works offline on a fresh install. Other languages are not bundled: `hermes limbic languages --set <langs>` installs them into the dependency environment, and `status` reports `entity_extraction` with the pipelines actually loaded when a configured language's model is absent. A custom EntityRuler adds deterministic patterns for known entities (user names, project names, products) that statistical NER misses. Graph traversal in `search_graph()` finds all fact_ids linked to query-extracted entities, merged into the retrieval candidate pool alongside vector and FTS5 results.
 
 Adaptive parameters stored as a local JSON file alongside the database (`limbic_params.json`):
 
@@ -1080,7 +1080,7 @@ Concurrent sessions: session-keyed user_id cache with threading.Lock.
 ```yaml
 # plugin.yaml
 name: limbic
-version: 0.9.1
+version: 0.9.2
 description: "Self-organising memory system. Opaque, adaptive, self-contained. Modelled on the biological limbic system."
 author: "D Yiapanis"
 kind: exclusive
