@@ -91,8 +91,8 @@ FORGET_SCHEMA = {
         # Exactly one of the two — schema-level statement of the dispatch
         # rule (tools.py enforces the same exactly-one-of at runtime).
         "oneOf": [
-            {"required": ["query"]},
-            {"required": ["fact_id"]},
+            {"type": "object", "required": ["query"]},
+            {"type": "object", "required": ["fact_id"]},
         ],
     },
 }
