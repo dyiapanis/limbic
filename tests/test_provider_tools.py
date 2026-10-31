@@ -162,6 +162,31 @@ def test_known_users_from_storage(provider):
     assert "carol" in users and "dave" in users
 
 
+def test_remember_resolves_raw_platform_id_to_canonical(provider, tmp_path):
+    """Regression: a raw Mattermost id arriving on the remember path must land
+    on the canonical user, not mint an orphan bucket.
+
+    The guard used to fall back to `_current_user_id`, which can itself be the
+    unresolved raw id — so the guard was a no-op and every Mattermost write was
+    filed under the raw platform id, invisible to that user's recall.
+    """
+    import yaml
+    from limbic.identity import UserManifest
+
+    cfg = {"alice": {"display_name": "Alice", "scope": "adult",
+                     "platform_ids": {"mattermost": "nkq8wv2mxyz7abcde9jhtwr4o"}}}
+    path = tmp_path / "users.yaml"
+    path.write_text(yaml.safe_dump({"users": cfg}))
+    provider._manifest = UserManifest(str(path), cfg)
+    provider._current_user_id = "nkq8wv2mxyz7abcde9jhtwr4o"  # the poisoning case
+
+    r = provider.remember("raw id write must land on a real scope",
+                          user_id="nkq8wv2mxyz7abcde9jhtwr4o")
+
+    assert provider._storage.count("alice") == 1, r
+    assert provider._storage.count("nkq8wv2mxyz7abcde9jhtwr4o") == 0
+
+
 def test_guardian_recall_sees_ward_facts(provider):
     """The guardian gate must widen scope when guardian_of is non-empty.
 
