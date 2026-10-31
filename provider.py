@@ -302,7 +302,11 @@ class LimbicMemoryProvider(MemoryProvider):
             if manifest is not None:
                 known = {c.lower() for c in manifest.canonical_names}
                 if uid.lower() not in known:
-                    fallback = self._current_user_id
+                    # Resolve the raw platform id against the manifest first:
+                    # _current_user_id can itself be the unresolved raw id, and
+                    # falling back to it is how an orphan bucket gets minted.
+                    ident = manifest.resolve(str(uid), "")
+                    fallback = ident.canonical if ident else self._current_user_id
                     if fallback:
                         logger.warning(
                             "limbic: remember uid %r not in manifest — attributing to %s",
@@ -1996,10 +2000,14 @@ class LimbicMemoryProvider(MemoryProvider):
         try:
             from gateway.session_context import get_session_env
             raw = get_session_env("HERMES_SESSION_USER_ID", "").strip()
+            platform = get_session_env("HERMES_SESSION_PLATFORM", "").strip()
         except Exception:
             raw = ""
+            platform = ""
         if raw:
-            canonical, _, _, _ = self._resolve_identity(raw, {})
+            # Platform is bound per-message by the gateway; passing it keeps
+            # resolution exact instead of relying on the bare-value fallback.
+            canonical, _, _, _ = self._resolve_identity(raw, {"platform": platform})
             if canonical:
                 with self._session_lock:
                     self._current_user_id = canonical

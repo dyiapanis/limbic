@@ -18,7 +18,7 @@ users:
   alice:
     display_name: Alice
     scope: adult
-    platform_ids: {matrix: '@alice:hs.org', email: Alice@Example.com}
+    platform_ids: {matrix: '@alice:hs.org', email: Alice@Example.com, mattermost: 'nkq8wv2mxyz7abcde9jhtwr4o'}
   bob:
     display_name: Bob
     scope: child
@@ -57,6 +57,19 @@ def test_matrix_id_without_platform_stated(manifest):
     # platform="" with a homespaced Matrix ID still resolves (unambiguous)
     ident = manifest.resolve("@alice:hs.org", "")
     assert ident is not None and ident.canonical == "alice"
+
+
+def test_opaque_platform_id_without_platform_stated(manifest):
+    # Regression: gateway tool/prefetch paths resolve identity without a
+    # platform. A Mattermost id must still land on its user, not on a raw-id
+    # orphan bucket.
+    ident = manifest.resolve("nkq8wv2mxyz7abcde9jhtwr4o", "")
+    assert ident is not None and ident.canonical == "alice"
+
+
+def test_short_numeric_id_without_platform_stated_refused(manifest):
+    # "7" (bob's simplex id) is guessable — never resolved bare
+    assert manifest.resolve("7", "") is None
 
 
 def test_unknown_user_returns_none(manifest):
