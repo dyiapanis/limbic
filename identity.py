@@ -35,6 +35,16 @@ logger = logging.getLogger(__name__)
 # Platforms compared case-insensitively (email addresses); others exact.
 _CASE_INSENSITIVE_PLATFORMS = {"email"}
 
+# Platforms whose IDs a third party could quote to impersonate their owner
+# (emails, phone numbers). A bare value seen without a platform never resolves
+# against these — see UserManifest.resolve.
+_QUOTABLE_PLATFORMS = {"email", "phone", "sms", "imessage"}
+
+# Bare (platform-less) matches require an id at least this long, which excludes
+# guessable short numeric ids (telegram, simplex) while admitting Mattermost's
+# 26-char random ids and homespaced Matrix MXIDs.
+_BARE_ID_MIN_LEN = 12
+
 
 @dataclass
 class Identity:
@@ -99,12 +109,20 @@ class UserManifest:
             v = v.lower()
         canonical = self._by_platform.get((p, v))
         if not canonical and not p:
-            # Platform not stated: match only unambiguous homespaced Matrix IDs.
-            # A bare value match across all platforms would let anyone on an
-            # unregistered platform quote a registered ID (email, phone) and
+            # Platform not stated: fall back to a bare-value match, restricted to
+            # IDs a third party cannot guess or quote. Quotable identifiers
+            # (email/phone/sms/imessage) and short ids (telegram/simplex) are
+            # excluded — otherwise a registered value quoted from elsewhere would
             # resolve to that user's identity and guardian map.
             if v.startswith("@") and ":" in v:
                 canonical = self._by_platform.get(("matrix", v))
+            if not canonical and len(v) >= _BARE_ID_MIN_LEN:
+                # ponytail: first match wins if one ID is registered under two
+                # platforms; add an ambiguity warning if that ever happens.
+                for (plat, pid), canon in self._by_platform.items():
+                    if plat not in _QUOTABLE_PLATFORMS and pid == v:
+                        canonical = canon
+                        break
         if not canonical:
             return None
         cfg = self._users[canonical]
@@ -162,12 +180,12 @@ users:
   alice:
     display_name: Alice
     scope: adult
-    platform_ids: {matrix: '@alice:hs.org', email: Alice@Example.com}
+    platform_ids: {matrix: '@alice:hs.org', email: Alice@Example.com, mattermost: 'nkq8wv2mxyz7abcde9jhtwr4o'}
   bob:
     display_name: Bob
     scope: child
     guardians: [alice]
-    platform_ids: {matrix: '@bob:hs.org'}
+    platform_ids: {matrix: '@bob:hs.org', simplex: '7'}
 """
     with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
         f.write(yaml_text)
@@ -183,6 +201,11 @@ users:
     e = m.resolve("alice@example.com", "email")
     assert e and e.canonical == "alice", e  # case-insensitive email
     assert m.resolve("@nobody:hs.org", "matrix") is None
+    # bare (platform-less) resolution: opaque ids yes, quotable/guessable no
+    mm = m.resolve("nkq8wv2mxyz7abcde9jhtwr4o", "")
+    assert mm and mm.canonical == "alice", mm
+    assert m.resolve("alice@example.com", "") is None
+    assert m.resolve("7", "") is None
     os.unlink(path)
     print("identity demo ok")
 

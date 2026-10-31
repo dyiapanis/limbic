@@ -1,6 +1,6 @@
 # Limbic — Opaque Memory System Specification
 
-**Version 0.9.3** · Author: D Yiapanis · License: PolyForm Noncommercial 1.0.0
+**Version 0.9.4** · Author: D Yiapanis · License: PolyForm Noncommercial 1.0.0
 
 ## Overview
 
@@ -1080,7 +1080,7 @@ Concurrent sessions: session-keyed user_id cache with threading.Lock.
 ```yaml
 # plugin.yaml
 name: limbic
-version: 0.9.3
+version: 0.9.4
 description: "Self-organising memory system. Opaque, adaptive, self-contained. Modelled on the biological limbic system."
 author: "D Yiapanis"
 kind: exclusive
