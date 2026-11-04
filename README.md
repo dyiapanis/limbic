@@ -2,7 +2,7 @@
 
 Self-Organising Memory for AI Agents
 
-**Version 0.9.4**
+**Version 0.9.5**
 Author: D Yiapanis · License: PolyForm Noncommercial 1.0.0 (source-available; commercial use requires a separate license)
 
 Limbic is a self-organising local memory system for AI agents. It stores facts, learns which ones matter through interaction, and surfaces the right context at the right time — without ever calling an LLM. Designed for [Hermes Agent](https://hermes-agent.nousresearch.com) and implements the upstream `MemoryProvider` ABC.
@@ -37,7 +37,7 @@ The agent sees three tools (`remember`, `recall`, `forget`). The operator sees o
 
 ## Quick Start
 
-**Platforms:** Linux and Windows, CI-tested on both. On Windows the model cache lives at `%USERPROFILE%\.cache\limbic`, and cross-process lock files are a POSIX feature — on Windows the store initialises lock-free (WAL mode still protects the single-writer, single-user case). All dependencies ship prebuilt Windows wheels; nothing to compile.
+**Platforms:** Linux, macOS and Windows, CI-tested on all three. On Windows the model cache lives at `%USERPROFILE%\.cache\limbic`, and cross-process lock files are a POSIX feature — absent there, so the store initialises lock-free (WAL mode still protects the single-writer, single-user case). All dependencies ship prebuilt wheels for all three platforms; nothing to compile. One interpreter requirement: `sqlite-vec` loads through SQLite's loadable-extension API, so the Python must be built with `--enable-loadable-sqlite-extensions` — Hermes ships such a build, as do most Linux distributions, but python.org's macOS installers do not.
 
 **1 — Install** from the Hermes catalog:
 
