@@ -8,6 +8,7 @@ on:
 jobs:
   pytest:
     strategy:
+      fail-fast: false  # three platforms = three independent signals; one red must not hide the others
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
@@ -17,11 +18,13 @@ jobs:
       # ships to users. That matters here: sqlite-vec loads through
       # sqlite3.Connection.enable_load_extension(), which only exists when
       # CPython is built with --enable-loadable-sqlite-extensions. python.org's
-      # macOS installers (what actions/setup-python uses there) are not, so the
-      # lane would fail on a Python no Limbic user runs.
+      # macOS installers (what the macOS runners ship) are not built that way,
+      # so the lane must not silently pick them up -- hence --managed-python.
       - uses: astral-sh/setup-uv@v5
+      - name: Provision managed CPython
+        run: uv python install 3.12
       - name: Create venv
-        run: uv venv --python 3.12
+        run: uv venv --python 3.12 --managed-python
       - name: Install test deps
         run: uv pip install pytest pyyaml numpy onnxruntime tokenizers sqlite-vec
       - name: Verify loadable SQLite extensions
