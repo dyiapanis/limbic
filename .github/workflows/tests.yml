@@ -13,10 +13,18 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+      # uv provisions python-build-standalone, the same CPython family Hermes
+      # ships to users. That matters here: sqlite-vec loads through
+      # sqlite3.Connection.enable_load_extension(), which only exists when
+      # CPython is built with --enable-loadable-sqlite-extensions. python.org's
+      # macOS installers (what actions/setup-python uses there) are not, so the
+      # lane would fail on a Python no Limbic user runs.
+      - uses: astral-sh/setup-uv@v5
+      - name: Create venv
+        run: uv venv --python 3.12
       - name: Install test deps
-        run: pip install pytest pyyaml numpy onnxruntime tokenizers sqlite-vec
+        run: uv pip install pytest pyyaml numpy onnxruntime tokenizers sqlite-vec
+      - name: Verify loadable SQLite extensions
+        run: uv run python -c "import sqlite3; assert hasattr(sqlite3.Connection, 'enable_load_extension'), 'interpreter lacks loadable sqlite extensions (sqlite-vec cannot load)'"
       - name: Run suite
-        run: python -m pytest tests/ -q
+        run: uv run python -m pytest tests/ -q
