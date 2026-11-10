@@ -8,15 +8,15 @@ an ignore signal on that channel would target the "flat trust + hot riding"
 cohort. This harness measures what that cohort actually contains.
 
 Fixture: eval/ignore_signal_cohort.json — 135 facts (retrieval_count >= 8,
-trust in the flat band across all six live fleet stores), hand-labelled by
-the store owner. Labels: rider = conversational fragment / banner / task
-echo; protected = rule / reference / log-fact.
+trust in the flat band), hand-labelled. Labels: rider = conversational
+fragment / banner / task echo; protected = rule / reference / log-fact.
 
 Verdict (2026-10-23): the cohort is ~21% riders. The signal fails the 0.90
 precision bar at 0.207 — it would drift the store's rulebook toward the
 floor, because standing records NEVER earn textual continuations by nature.
-Measured NO-GO; the mechanism is not implemented. Recorded here with the
-cohort so no one re-derives it by surprise.
+Measured NO-GO; the mechanism is not implemented. The fixture itself was
+purged from the public history (2026-11-09, personal-data remediation) —
+any rebuilt cohort must come from scratch-store copies, never live profiles.
 
     Run: /path/to/env-venv-python eval/ignore_signal_eval.py
 """
@@ -43,7 +43,13 @@ def fragment_gate(prefix: str) -> bool:
 
 
 def main() -> int:
-    fx = json.load(open(os.path.join(HERE, "ignore_signal_cohort.json")))
+    fixture = os.path.join(HERE, "ignore_signal_cohort.json")
+    if not os.path.exists(fixture):
+        print("fixture absent — ignore_signal_cohort.json was purged from the public")
+        print("history on 2026-11-09 (harvested from live fleet stores; carried personal")
+        print("content). Rebuild any successor cohort from scratch-store copies only.")
+        return 2
+    fx = json.load(open(fixture))
     facts = fx["facts"]
     n = len(facts)
     riders = [f for f in facts if f["lbl"] == "rider"]
