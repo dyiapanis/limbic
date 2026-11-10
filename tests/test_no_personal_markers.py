@@ -31,6 +31,8 @@ def tracked_text_files():
     for path in out:
         if path.startswith("models/"):
             continue  # vendored spaCy package, not authored here
+        if path == "tests/test_no_personal_markers.py":
+            continue  # this scan's own definition — its MARKERS list would self-match
         raw = open(os.path.join(reporoot, path), "rb").read(4_000_000)
         if b"\x00" in raw:
             continue  # binary heuristic — lexicons, ONNX, images
