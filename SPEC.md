@@ -137,9 +137,9 @@ Each path catches what the others miss. Results are fused via Reciprocal Rank Fu
 
 **Brain function:** Sits between the hippocampus and the cortex. Grid cells create a coordinate system — it's how the brain knows that two memories encoded at different times are in the same neighbourhood of memory space.
 
-**Limbic component:** The entity graph's cross-references. Facts linked to "alice" and facts linked to "marathon" are connected through their shared entity — the intersection of two entity regions. The entorhinal cortex doesn't store content; it stores the coordinate relationships that make navigation possible.
+**Limbic component:** The entity graph's cross-references. Facts linked to "grace" and facts linked to "marathon" are connected through their shared entity — the intersection of two entity regions. The entorhinal cortex doesn't store content; it stores the coordinate relationships that make navigation possible.
 
-When the thalamus routes a query, the entity graph path traverses these coordinates. `search_graph(["alice", "marathon"])` activates the intersection of two regions — facts linked to both entities. This is structural navigation, not fuzzy similarity. A fact linked to "alice" is exactly about Alice, not about someone with a similar name.
+When the thalamus routes a query, the entity graph path traverses these coordinates. `search_graph(["grace", "marathon"])` activates the intersection of two regions — facts linked to both entities. This is structural navigation, not fuzzy similarity. A fact linked to "grace" is exactly about Grace, not about someone with a similar name.
 
 The entity graph tables (`entities` + `mentions`) are the coordinate system. Each entity is a coordinate. Each fact-entity link places a fact at that coordinate. Multiple links place a fact at the intersection of coordinates. This is how the brain knows "marathon training" and "the 2026 race" are in the same neighbourhood, even if encoded at different times — they share coordinates.
 
@@ -342,10 +342,10 @@ And a context block that appears before turns where memory is relevant:
 
 ```
 <limbic-context>
-You're chatting with alice (adult). Recalled user preferences shape your responses.
-User-separation rule: You are talking to alice. Do not reference, mention, or apply
+You're chatting with grace (adult). Recalled user preferences shape your responses.
+User-separation rule: You are talking to grace. Do not reference, mention, or apply
 other users' personal data. If recalled context or conversation history mentions another
-user, do not surface it to alice.
+user, do not surface it to grace.
 Project architecture discussion — evaluating opaque Limbic design.
 Adaptive parameter engine — self-tuning trust and retrieval weights.
 </limbic-context>
@@ -629,7 +629,7 @@ Each fact is a row in the `facts` table:
     "fact_id": 42,               # INTEGER PRIMARY KEY AUTOINCREMENT
     "embedding": [1024 floats],  # BLOB — float32 vector stored via sqlite-vec (bundled model dims)
     "content": "City Marathon 2026 — sub 4hr goal, race day Aug 30",
-    "user_id": "alice",
+    "user_id": "grace",
     "trust_score": 0.89,         # decayed value (apply_decay writes this every turn)
     "retrieval_count": 3,
     "last_retrieved": "2026-07-14T22:00:00Z",
@@ -1135,8 +1135,8 @@ END
 The `stats()` operator function queries the store for performance metrics:
 
 ```python
-stats(user_id="alice")
-# → {"user_id": "alice", "total_facts": 4912, "avg_trust": 0.535,
+stats(user_id="grace")
+# → {"user_id": "grace", "total_facts": 4912, "avg_trust": 0.535,
 #    "matured": 0, "faded": 2}
 
 stats()  # aggregate

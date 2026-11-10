@@ -68,9 +68,9 @@ def _receipt_path(provider):
 
 
 def test_query_step_lists_candidates_nothing_deleted(provider):
-    fid1 = provider.remember("The HP laptop costs 800 dollars", user_id="alice")["fact_id"]
-    provider.remember("Alice likes running in the mornings", user_id="alice")
-    out = provider.forget_memory(query="HP laptop", user_id="alice")
+    fid1 = provider.remember("The HP laptop costs 800 dollars", user_id="grace")["fact_id"]
+    provider.remember("Grace likes running in the mornings", user_id="grace")
+    out = provider.forget_memory(query="HP laptop", user_id="grace")
     assert out["status"] == "candidates"
     assert out["count"] >= 1
     ids = [c["fact_id"] for c in out["candidates"]]
@@ -83,8 +83,8 @@ def test_query_step_lists_candidates_nothing_deleted(provider):
 
 
 def test_fact_id_step_deletes_scoped_and_writes_hash_only_receipt(provider, tmp_path):
-    fid = provider.remember("secret: the wifi password is hunter2", user_id="alice")["fact_id"]
-    out = provider.forget_memory(fact_id=fid, user_id="alice")
+    fid = provider.remember("secret: the wifi password is hunter2", user_id="grace")["fact_id"]
+    out = provider.forget_memory(fact_id=fid, user_id="grace")
     assert out["removed"] is True
     assert out["fact_id"] == fid
     assert "hunter2" in out["content"]  # confirmation shows what was removed
@@ -100,7 +100,7 @@ def test_fact_id_step_deletes_scoped_and_writes_hash_only_receipt(provider, tmp_
     raw = open(rp).read()
     assert "hunter2" not in raw  # the secret must not be retained
     line = json.loads(raw.strip().splitlines()[-1])
-    assert line["user_id"] == "alice"
+    assert line["user_id"] == "grace"
     assert line["fact_id"] == fid
     assert line["content_sha256"] == hashlib.sha256(
         b"secret: the wifi password is hunter2").hexdigest()
@@ -109,22 +109,22 @@ def test_fact_id_step_deletes_scoped_and_writes_hash_only_receipt(provider, tmp_
 
 def test_one_user_cannot_delete_anothers_fact(provider):
     fid = provider.remember("bob private fact about taxes", user_id="bob")["fact_id"]
-    out = provider.forget_memory(fact_id=fid, user_id="alice")
+    out = provider.forget_memory(fact_id=fid, user_id="grace")
     assert "error" in out
     assert provider._storage.get(fid) is not None  # untouched
 
 
 def test_exactly_one_of_query_fact_id_required(provider):
-    assert "error" in provider.forget_memory(query="x", fact_id=1, user_id="alice")
-    assert "error" in provider.forget_memory(user_id="alice")
+    assert "error" in provider.forget_memory(query="x", fact_id=1, user_id="grace")
+    assert "error" in provider.forget_memory(user_id="grace")
     assert "error" in provider.forget_memory(user_id=None)
 
 
 def test_tool_dispatch_two_step(provider, monkeypatch):
-    provider.remember("the eiffel tower fact for dispatch", user_id="alice")
+    provider.remember("the eiffel tower fact for dispatch", user_id="grace")
     # Dispatch test, not identity: stub the resolver (the real manifest
     # canonicalises freely and is owned by identity tests).
-    monkeypatch.setattr(provider, "_get_user_id", lambda session_id: "alice")
+    monkeypatch.setattr(provider, "_get_user_id", lambda session_id: "grace")
     r = json.loads(handle_tool_call(provider, "forget", {"query": "eiffel"},
                                     session_id="sess-1"))
     assert r["status"] == "candidates"
@@ -140,9 +140,9 @@ def test_tool_dispatch_two_step(provider, monkeypatch):
 
 
 def test_receipt_failure_never_blocks_deletion(provider, tmp_path, monkeypatch):
-    fid = provider.remember("fact whose receipt write will fail", user_id="alice")["fact_id"]
+    fid = provider.remember("fact whose receipt write will fail", user_id="grace")["fact_id"]
     monkeypatch.setattr(provider._storage, "_db_path", "")
-    out = provider.forget_memory(fact_id=fid, user_id="alice")
+    out = provider.forget_memory(fact_id=fid, user_id="grace")
     assert out["removed"] is True  # delete stands even if the receipt fails
     assert provider._storage.get(fid) is None
 
@@ -150,9 +150,9 @@ def test_receipt_failure_never_blocks_deletion(provider, tmp_path, monkeypatch):
 def test_fts_fallback_when_embedder_gone(provider, monkeypatch):
     # Embedder may be unavailable while old facts remain: candidates must
     # still surface via FTS alone (no silent empty result).
-    fid = provider.remember("the lighthouse keeper stores lamp oil", user_id="alice")["fact_id"]
+    fid = provider.remember("the lighthouse keeper stores lamp oil", user_id="grace")["fact_id"]
     monkeypatch.setattr(provider, "_embedder", None)
-    out = provider.forget_memory(query="lighthouse keeper", user_id="alice")
+    out = provider.forget_memory(query="lighthouse keeper", user_id="grace")
     assert out["status"] == "candidates"
     assert fid in [c["fact_id"] for c in out["candidates"]]
 
@@ -161,14 +161,14 @@ def test_forget_fact_cli_path_also_writes_receipt(provider, tmp_path):
     as the two-step forget tool (caught missing during the 2026-10-23 fleet
     cleanup — 28 CLI deletes had shipped with no tombstones)."""
     content = "cli-path receipt check: fleet rule number nine"
-    fid = provider.remember(content, user_id="alice")["fact_id"]
-    out = provider.forget_fact(fid, user_id="alice")
+    fid = provider.remember(content, user_id="grace")["fact_id"]
+    out = provider.forget_fact(fid, user_id="grace")
     assert out["removed"] is True
 
     rp = _receipt_path(provider)
     assert os.path.exists(rp)
     line = json.loads(open(rp).read().strip().splitlines()[-1])
-    assert line["user_id"] == "alice"
+    assert line["user_id"] == "grace"
     assert line["fact_id"] == fid
     assert line["content_sha256"] == hashlib.sha256(content.encode()).hexdigest()
     assert content not in open(rp).read()  # no content retained

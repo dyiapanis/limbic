@@ -74,7 +74,7 @@ class UserManifest:
                 if p in _CASE_INSENSITIVE_PLATFORMS:
                     v = v.lower()
                 self._by_platform[(p, v)] = canon
-            # Reverse guardian map: bob.guardians=[alice] → alice.guardian_of=[bob]
+            # Reverse guardian map: bob.guardians=[grace] → grace.guardian_of=[bob]
             for g in cfg.get("guardians", []) or []:
                 self._guardian_of.setdefault(str(g).lower().strip(), []).append(canon)
 
@@ -177,14 +177,14 @@ def _demo() -> None:
     import tempfile
     yaml_text = """
 users:
-  alice:
-    display_name: Alice
+  grace:
+    display_name: Grace
     scope: adult
-    platform_ids: {matrix: '@alice:hs.org', email: Alice@Example.com, mattermost: 'nkq8wv2mxyz7abcde9jhtwr4o'}
+    platform_ids: {matrix: '@grace:hs.org', email: Grace@Example.com, mattermost: 'nkq8wv2mxyz7abcde9jhtwr4o'}
   bob:
     display_name: Bob
     scope: child
-    guardians: [alice]
+    guardians: [grace]
     platform_ids: {matrix: '@bob:hs.org', simplex: '7'}
 """
     with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
@@ -192,19 +192,19 @@ users:
         path = f.name
     import yaml as _y
     m = UserManifest(path, _y.safe_load(_y_text_of(path))["users"])
-    a = m.resolve("@alice:hs.org", "matrix")
-    assert a and a.canonical == "alice" and a.scope == "adult", a
+    a = m.resolve("@grace:hs.org", "matrix")
+    assert a and a.canonical == "grace" and a.scope == "adult", a
     b = m.resolve("@bob:hs.org", "matrix")
     assert b and b.canonical == "bob" and b.scope == "child", b
-    assert b.guardians == ["alice"], b.guardians
+    assert b.guardians == ["grace"], b.guardians
     assert a.guardian_of == ["bob"], a.guardian_of
-    e = m.resolve("alice@example.com", "email")
-    assert e and e.canonical == "alice", e  # case-insensitive email
+    e = m.resolve("grace@example.com", "email")
+    assert e and e.canonical == "grace", e  # case-insensitive email
     assert m.resolve("@nobody:hs.org", "matrix") is None
     # bare (platform-less) resolution: opaque ids yes, quotable/guessable no
     mm = m.resolve("nkq8wv2mxyz7abcde9jhtwr4o", "")
-    assert mm and mm.canonical == "alice", mm
-    assert m.resolve("alice@example.com", "") is None
+    assert mm and mm.canonical == "grace", mm
+    assert m.resolve("grace@example.com", "") is None
     assert m.resolve("7", "") is None
     os.unlink(path)
     print("identity demo ok")

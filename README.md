@@ -130,7 +130,7 @@ python3 ~/.hermes/plugins/limbic/reindex.py --all          # every profile
 - **Separate Hermes profiles** — hard isolation, different DBs and agents. Use for different products, tenants, or users who must never share context.
 - **One profile + `users.yaml`** — one agent, one store, a separate memory bucket per user: what you store and recall is always attributed to the person speaking. The manifest adds display names and guardian semantics (a guardian may write into a ward's scope; others may not) — and its shape is the same whether there are two users or twenty.
 
-Without the manifest the same isolation still happens: every platform account that talks to the agent gets its own bucket, keyed by their full platform ID (`@alice:hs1` ≠ `@alice42:evil.org`; a single user simply sees one bucket). Adding the manifest later is purely additive — buckets resolve per `user_id`, never per configuration edit.
+Without the manifest the same isolation still happens: every platform account that talks to the agent gets its own bucket, keyed by their full platform ID (`@grace:hs1` ≠ `@grace42:evil.org`; a single user simply sees one bucket). Adding the manifest later is purely additive — buckets resolve per `user_id`, never per configuration edit.
 
 Enable multi-user mode by copying the shipped example next to the plugin code
 (or set `users_manifest:` in `limbic.yaml` to any path):
@@ -144,17 +144,17 @@ cp ~/.hermes/plugins/limbic/users.yaml.example \
 # users.yaml — identity only; limbic reads display_name, scope,
 # platform_ids, guardians. Roles are ignored here (see access-control).
 users:
-  alice:
-    display_name: Alice
+  grace:
+    display_name: Grace
     scope: adult
     platform_ids:
-      matrix: "@alice:example.org"
+      matrix: "@grace:example.org"
       telegram: "123456789"
     guardians: []
   bob:
     display_name: Bob
     scope: child
-    guardians: [alice]
+    guardians: [grace]
     platform_ids:
       matrix: "@bob:example.org"
 ```

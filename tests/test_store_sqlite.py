@@ -38,7 +38,7 @@ def store(tmp_path):
 def _mkfact(store, i):
     return store.store(
         f"fact number {i} about topic {i % 3}",
-        user_id="alice",
+        user_id="grace",
         embedding=_vec(i),
         metadata={"trust_score": 0.5, "pinned": False},
     )
@@ -53,7 +53,7 @@ def fact_row(store, fid):
     fact = store.get(fid)
     if fact is None:
         return False
-    return fact["content"] == "fact number 1 about topic 1" and fact["user_id"] == "alice"
+    return fact["content"] == "fact number 1 about topic 1" and fact["user_id"] == "grace"
 
 
 def test_ids_are_sequential_autoincrement(store):
@@ -90,7 +90,7 @@ def test_delete_removes_fact_vec_fts_atomically(store):
     assert store.get(target) is None
     n = store._db.execute("SELECT COUNT(*) FROM vec_index WHERE rowid = ?", (target,)).fetchone()[0]
     assert n == 0
-    hits = store.search_fts("number", {"user_id": "alice"}, limit=10)
+    hits = store.search_fts("number", {"user_id": "grace"}, limit=10)
     assert all(h["fact_id"] != target for h in hits)
 
 

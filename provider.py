@@ -331,7 +331,7 @@ class LimbicMemoryProvider(MemoryProvider):
         # ponytail: fragment gate — both conditions must fail to reject.
         # words<3 catches the real junk (1-2 word steering/ack messages:
         # "yes", "ok", "proceed", "shut up"); dense short facts
-        # ("Alice is vegan") pass and decay handles anything marginal.
+        # ("Grace is vegan") pass and decay handles anything marginal.
         # Thresholds tunable in limbic.yaml.
         gate_chars = int(self._config.get("fragment_gate_chars", 60))
         gate_words = int(self._config.get("fragment_gate_words", 3))
@@ -343,7 +343,7 @@ class LimbicMemoryProvider(MemoryProvider):
                     "reason": f"Too short to be a durable fact (<{gate_chars} chars and <{gate_words} words)."}
 
         # Guardian case: detect if the fact is about another user
-        # "Bob is interested in Harry Potter" → user_id=bob, not alice
+        # "Bob is interested in Harry Potter" → user_id=bob, not grace
         target_user = self._detect_subject_user(content, uid)
         if target_user and target_user != uid:
             logger.info("limbic: guardian write — fact about %s stored under %s (told by %s)",
@@ -1917,7 +1917,7 @@ class LimbicMemoryProvider(MemoryProvider):
             },
             {
                 "key": "known_entities",
-                "description": "Extra entity patterns as 'LABEL:pattern' strings, comma-separated (e.g. 'PERSON:Alice,ORG:Acme Corp'). Deployments configure; plugin default is empty.",
+                "description": "Extra entity patterns as 'LABEL:pattern' strings, comma-separated (e.g. 'PERSON:Grace,ORG:Acme Corp'). Deployments configure; plugin default is empty.",
                 "default": "",
             },
         ]
@@ -2024,7 +2024,7 @@ class LimbicMemoryProvider(MemoryProvider):
         """Detect if a fact is ABOUT another user, not about the speaker.
         
         Guardian case: "Bob is interested in Harry Potter" 
-        → speaker is alice, but fact is about bob → store under bob.
+        → speaker is grace, but fact is about bob → store under bob.
         
         Heuristic: if the content starts with or prominently mentions 
         another known user's name as the subject, attribute to them.
@@ -2041,7 +2041,7 @@ class LimbicMemoryProvider(MemoryProvider):
         
         # 2026-09-04 user-scoping audit: only a GUARDIAN may write facts into
         # another user's scope. Without this, any speaker re-attributes by
-        # naming a subject ("Alice is..." pollutes alice's store).
+        # naming a subject ("Grace is..." pollutes grace's store).
         speaker_guardian_of: list[str] = []
         manifest = getattr(self, "_manifest", None)
         if manifest is not None:
@@ -2139,7 +2139,7 @@ class LimbicMemoryProvider(MemoryProvider):
                     len(seen))
 
         # 3. Matrix identity fallback — full lowercased MXID as the bucket.
-        # Never strip the homeserver or trailing digits: @alice:hs1 and @alice42:evil.org
+        # Never strip the homeserver or trailing digits: @grace:hs1 and @grace42:evil.org
         # are DIFFERENT people and must not share a memory store.
         if platform_user_id.startswith("@") and ":" in platform_user_id:
             mxid = platform_user_id.lower()
