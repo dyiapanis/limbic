@@ -109,15 +109,15 @@ def test_forget_fact_requires_user(provider):
 
 
 def test_forget_fact_ownership_mismatch(provider):
-    fid = provider.remember("ownership test fact", user_id="alice")["fact_id"]
+    fid = provider.remember("ownership test fact", user_id="grace")["fact_id"]
     r = provider.forget_fact(fid, user_id="bob")
     assert "error" in r
     assert provider._storage.get(fid) is not None
 
 
 def test_forget_fact_owner_can_delete(provider):
-    fid = provider.remember("ownership test fact", user_id="alice")["fact_id"]
-    r = provider.forget_fact(fid, user_id="alice")
+    fid = provider.remember("ownership test fact", user_id="grace")["fact_id"]
+    r = provider.forget_fact(fid, user_id="grace")
     assert r.get("removed") is True
     assert provider._storage.get(fid) is None
 
@@ -125,7 +125,7 @@ def test_forget_fact_owner_can_delete(provider):
 def test_no_content_in_logs(provider, caplog):
     import logging
     with caplog.at_level(logging.DEBUG, logger="limbic"):
-        provider.remember("very unique secret phrase zqxjwv", user_id="alice")
+        provider.remember("very unique secret phrase zqxjwv", user_id="grace")
         provider.recall("very unique secret phrase zqxjwv")
     for record in caplog.records:
         assert "zqxjwv" not in record.getMessage(), f"PII leak: {record.getMessage()}"
@@ -173,7 +173,7 @@ def test_remember_resolves_raw_platform_id_to_canonical(provider, tmp_path):
     import yaml
     from limbic.identity import UserManifest
 
-    cfg = {"alice": {"display_name": "Alice", "scope": "adult",
+    cfg = {"grace": {"display_name": "Grace", "scope": "adult",
                      "platform_ids": {"mattermost": "nkq8wv2mxyz7abcde9jhtwr4o"}}}
     path = tmp_path / "users.yaml"
     path.write_text(yaml.safe_dump({"users": cfg}))
@@ -183,7 +183,7 @@ def test_remember_resolves_raw_platform_id_to_canonical(provider, tmp_path):
     r = provider.remember("raw id write must land on a real scope",
                           user_id="nkq8wv2mxyz7abcde9jhtwr4o")
 
-    assert provider._storage.count("alice") == 1, r
+    assert provider._storage.count("grace") == 1, r
     assert provider._storage.count("nkq8wv2mxyz7abcde9jhtwr4o") == 0
 
 
@@ -194,13 +194,13 @@ def test_guardian_recall_sees_ward_facts(provider):
     False (a guardian is never their own ward) — so guardians could never
     see ward facts. The gate must test `if guardian_of:`.
     """
-    provider._session_user_id["sess-g"] = "alice"
+    provider._session_user_id["sess-g"] = "grace"
     provider._session_guardian_of["sess-g"] = ["bob"]
-    provider._current_user_id = "alice"
+    provider._current_user_id = "grace"
     provider.remember("bob likes trains choo choo", session_id="sess-g", user_id="bob")
 
-    # alice's recall on her own session must surface bob's fact (ward scope)
-    results = provider._search("trains", "alice", session_id="sess-g")
+    # grace's recall on her own session must surface bob's fact (ward scope)
+    results = provider._search("trains", "grace", session_id="sess-g")
     contents = [r["content"] for r in results]
     assert any("trains" in c for c in contents), f"guardian recall missed ward fact: {contents}"
 

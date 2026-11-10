@@ -63,7 +63,7 @@ def make_provider(tmp_path, nli_label="contradiction", max_per_turn=3):
     p._atrophy_marked_count = 0
     p._atrophy_swept_count = 0
     # isolate the unit under test from unrelated collaborators
-    p._get_user_id = lambda sid: "alice"
+    p._get_user_id = lambda sid: "grace"
     p._detect_subject_user = lambda content, uid: None
     p._is_ephemeral_date_fact = lambda c: False
     p._compute_surprise = lambda emb, uid: 0.5
@@ -77,13 +77,13 @@ def test_contradiction_creates_a_link(tmp_path):
     """NLI fires before the new fact is stored, so the link can only be written
     after store() returns an id. If that ordering regresses, this fails."""
     p, store, _ = make_provider(tmp_path)
-    first = p.remember("Alice prefers Postgres for the analytics service", user_id="alice")
-    second = p.remember("Alice no longer prefers Postgres for analytics", user_id="alice")
+    first = p.remember("Grace prefers Postgres for the analytics service", user_id="grace")
+    second = p.remember("Grace no longer prefers Postgres for analytics", user_id="grace")
 
     assert first["status"] == "stored"
     assert second["status"] == "stored"
 
-    links = store.unresolved_contradictions("alice", limit=10)
+    links = store.unresolved_contradictions("grace", limit=10)
     assert len(links) == 1
     assert links[0]["newer_fact_id"] == second["fact_id"]   # the correction
     assert links[0]["older_fact_id"] == first["fact_id"]    # the corrected
@@ -92,16 +92,16 @@ def test_contradiction_creates_a_link(tmp_path):
 def test_write_time_penalty_still_applies(tmp_path):
     """The link is additive — the existing one-shot penalty must be unchanged."""
     p, store, _ = make_provider(tmp_path)
-    first = p.remember("Alice prefers Postgres for the analytics service", user_id="alice")
-    p.remember("Alice no longer prefers Postgres for analytics", user_id="alice")
+    first = p.remember("Grace prefers Postgres for the analytics service", user_id="grace")
+    p.remember("Grace no longer prefers Postgres for analytics", user_id="grace")
     assert store.get(first["fact_id"])["trust_score"] < 0.5
 
 
 def test_no_link_without_contradiction(tmp_path):
     p, store, _ = make_provider(tmp_path, nli_label="entailment")
-    p.remember("Alice prefers Postgres for the analytics service", user_id="alice")
-    p.remember("Alice likes Postgres for the analytics service", user_id="alice")
-    assert store.count_open_contradictions("alice") == 0
+    p.remember("Grace prefers Postgres for the analytics service", user_id="grace")
+    p.remember("Grace likes Postgres for the analytics service", user_id="grace")
+    assert store.count_open_contradictions("grace") == 0
 
 
 # ── Tick re-check ─────────────────────────────────────────────────────
@@ -110,16 +110,16 @@ def test_recheck_resolves_when_correction_landed(tmp_path):
     """Older fact faded below the floor -> the correction worked, close the link."""
     p, store, _ = make_provider(tmp_path)
     newer, older = _link(p, store, older_trust=0.10)
-    p._recheck_contradictions("alice")
-    assert store.count_open_contradictions("alice") == 0
+    p._recheck_contradictions("grace")
+    assert store.count_open_contradictions("grace") == 0
     assert store.get(older)["trust_score"] == pytest.approx(0.10)   # untouched
 
 
 def test_recheck_resolves_when_no_longer_contradictory(tmp_path):
     p, store, _ = make_provider(tmp_path, nli_label="neutral")
     newer, older = _link(p, store, older_trust=0.9)
-    p._recheck_contradictions("alice")
-    assert store.count_open_contradictions("alice") == 0
+    p._recheck_contradictions("grace")
+    assert store.count_open_contradictions("grace") == 0
     assert store.get(older)["trust_score"] == pytest.approx(0.9)    # untouched
 
 
@@ -129,11 +129,11 @@ def test_recheck_reasserts_when_trust_recovered(tmp_path):
     newer, older = _link(p, store, older_trust=0.9)
     penalty = trust.correction_penalty_value()
 
-    p._recheck_contradictions("alice")
+    p._recheck_contradictions("grace")
 
     assert store.get(older)["trust_score"] == pytest.approx(0.9 - penalty)
     # stays open so the correction keeps acting
-    assert store.count_open_contradictions("alice") == 1
+    assert store.count_open_contradictions("grace") == 1
 
 
 def test_recheck_is_bounded(tmp_path):
@@ -143,10 +143,10 @@ def test_recheck_is_bounded(tmp_path):
     for i in range(6):
         store.link_contradiction(newer, _fact(store, i, trust=0.9))
 
-    p._recheck_contradictions("alice")
+    p._recheck_contradictions("grace")
 
     assert p._nli.calls <= 2
-    assert store.count_open_contradictions("alice") == 6   # none resolved
+    assert store.count_open_contradictions("grace") == 6   # none resolved
 
 
 def test_recheck_expires_stale_links(tmp_path):
@@ -157,7 +157,7 @@ def test_recheck_expires_stale_links(tmp_path):
     )
     store._db.commit()
 
-    p._recheck_contradictions("alice")
+    p._recheck_contradictions("grace")
 
     assert store._db.execute("SELECT COUNT(*) FROM contradictions").fetchone()[0] == 0
 
@@ -165,23 +165,23 @@ def test_recheck_expires_stale_links(tmp_path):
 def test_recheck_is_safe_to_repeat(tmp_path):
     p, store, _ = make_provider(tmp_path)
     newer, older = _link(p, store, older_trust=0.9)
-    p._recheck_contradictions("alice")
+    p._recheck_contradictions("grace")
     first = store.get(older)["trust_score"]
-    p._recheck_contradictions("alice")
+    p._recheck_contradictions("grace")
     assert store.get(older)["trust_score"] <= first
-    assert store.count_open_contradictions("alice") == 1
+    assert store.count_open_contradictions("grace") == 1
 
 
 def test_recheck_no_links_is_a_noop(tmp_path):
     p, store, _ = make_provider(tmp_path)
     _fact(store, 1)
-    p._recheck_contradictions("alice")          # must not raise
-    assert store.count_open_contradictions("alice") == 0
+    p._recheck_contradictions("grace")          # must not raise
+    assert store.count_open_contradictions("grace") == 0
 
 
 # ── helpers ───────────────────────────────────────────────────────────
 
-def _fact(store, i, user="alice", trust=0.5):
+def _fact(store, i, user="grace", trust=0.5):
     return store.store(
         content=f"fact number {i}",
         user_id=user,

@@ -42,7 +42,7 @@ No — both models run locally as bundled ONNX (offline, no API). No remote opti
 
 Memory is per Hermes profile. For 2 or more people sharing one group:
 
-- **One profile + `users.yaml`** — Limbic recognises the user and scopes memories (e.g. "Alice likes tacos"). Soft separation: family-doctor model — knows all members, doesn't volunteer others' info normally.
+- **One profile + `users.yaml`** — Limbic recognises the user and scopes memories (e.g. "Grace likes tacos"). Soft separation: family-doctor model — knows all members, doesn't volunteer others' info normally.
 - **Separate profiles** — dedicated agent per user, hard isolation, each agent has its own DB. Use if no leakage is acceptable.
 
 Only bots *mentioned* in a topic saving memories are controlled by wake-words/platform filtering in Hermes, not limbic-side — Limbic stores what the profile's agent is given.

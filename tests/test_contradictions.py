@@ -24,7 +24,7 @@ def store(tmp_path):
     s.close()
 
 
-def _mkfact(store, i, user="alice", trust=0.5):
+def _mkfact(store, i, user="grace", trust=0.5):
     return store.store(
         content=f"fact number {i}",
         user_id=user,
@@ -42,7 +42,7 @@ def test_link_and_read_back(store):
     newer, older = _mkfact(store, 1), _mkfact(store, 2)
     store.link_contradiction(newer, older)
 
-    open_links = store.unresolved_contradictions("alice", limit=10)
+    open_links = store.unresolved_contradictions("grace", limit=10)
     assert len(open_links) == 1
     link = open_links[0]
     assert link["newer_fact_id"] == newer
@@ -58,7 +58,7 @@ def test_link_is_idempotent(store):
     newer, older = _mkfact(store, 1), _mkfact(store, 2)
     store.link_contradiction(newer, older)
     store.link_contradiction(newer, older)
-    assert store.count_open_contradictions("alice") == 1
+    assert store.count_open_contradictions("grace") == 1
 
 
 def test_resolve_closes_link(store):
@@ -66,8 +66,8 @@ def test_resolve_closes_link(store):
     store.link_contradiction(newer, older)
     store.resolve_contradiction(newer, older)
 
-    assert store.unresolved_contradictions("alice", limit=10) == []
-    assert store.count_open_contradictions("alice") == 0
+    assert store.unresolved_contradictions("grace", limit=10) == []
+    assert store.count_open_contradictions("grace") == 0
     # resolved rows persist (audit trail), just not returned as open
     n = store._db.execute("SELECT COUNT(*) FROM contradictions").fetchone()[0]
     assert n == 1
@@ -79,7 +79,7 @@ def test_resolved_link_cannot_be_reopened(store):
     store.link_contradiction(newer, older)
     store.resolve_contradiction(newer, older)
     store.link_contradiction(newer, older)          # INSERT OR IGNORE
-    assert store.count_open_contradictions("alice") == 0
+    assert store.count_open_contradictions("grace") == 0
 
 
 def test_cascade_on_fact_delete(store):
@@ -89,7 +89,7 @@ def test_cascade_on_fact_delete(store):
     store.delete_fact(older)
     n = store._db.execute("SELECT COUNT(*) FROM contradictions").fetchone()[0]
     assert n == 0
-    assert store.unresolved_contradictions("alice", limit=10) == []
+    assert store.unresolved_contradictions("grace", limit=10) == []
 
 
 def test_limit_is_respected_and_oldest_first(store):
@@ -98,7 +98,7 @@ def test_limit_is_respected_and_oldest_first(store):
     for o in (older_a, older_b, older_c):
         store.link_contradiction(newer, o)
 
-    links = store.unresolved_contradictions("alice", limit=2)
+    links = store.unresolved_contradictions("grace", limit=2)
     assert len(links) == 2                      # bounded
     assert [l["older_fact_id"] for l in links] == [older_a, older_b]   # oldest first
 
@@ -111,11 +111,11 @@ def test_scoped_to_older_facts_owner(store):
     The scoping is asserted anyway so a future change to that search cannot
     silently widen the re-check to another user's store.
     """
-    newer = _mkfact(store, 1, user="alice")
+    newer = _mkfact(store, 1, user="grace")
     older = _mkfact(store, 2, user="bob")
     store.link_contradiction(newer, older)
 
-    assert store.unresolved_contradictions("alice", limit=10) == []
+    assert store.unresolved_contradictions("grace", limit=10) == []
     assert len(store.unresolved_contradictions("bob", limit=10)) == 1
 
 
@@ -129,7 +129,7 @@ def test_ttl_expiry_deletes_only_open(store):
     # cutoff in the future expires everything still open
     deleted = store.delete_expired_contradictions("2099-01-01T00:00:00+00:00")
     assert deleted == 1                          # only the open one
-    assert store.count_open_contradictions("alice") == 0
+    assert store.count_open_contradictions("grace") == 0
 
 
 def test_storage_rejects_unknown_column_still(store):

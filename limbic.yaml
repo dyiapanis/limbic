@@ -31,6 +31,6 @@ context_budget: 20
 # managed by the trust engine). There is no static yaml knob for them.
 # Fragment gate (2026-09-07): remember() rejects content shorter than BOTH
 # thresholds — conversational fragments ("Yes.", "ok", "Proceed") are not
-# durable facts. Dense short facts (3+ words, e.g. "Alice is vegan") pass.
+# durable facts. Dense short facts (3+ words, e.g. "Grace is vegan") pass.
 fragment_gate_chars: 60
 fragment_gate_words: 3

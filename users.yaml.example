@@ -9,12 +9,12 @@
 # users_manifest at any path.
 
 users:
-  alice:
-    display_name: Alice
+  grace:
+    display_name: Grace
     scope: adult
     platform_ids:
-      matrix: "@alice:example.org"
-      email: alice@example.com
+      matrix: "@grace:example.org"
+      email: grace@example.com
     guardians: []
     # roles: consumed by access-control tooling, ignored by Limbic
     roles:
@@ -27,4 +27,4 @@ users:
     scope: child
     platform_ids:
       matrix: "@bob:example.org"
-    guardians: [alice]
+    guardians: [grace]

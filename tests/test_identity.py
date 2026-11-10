@@ -15,14 +15,14 @@ from limbic.identity import UserManifest, load_manifest  # noqa: E402
 
 YAML = """
 users:
-  alice:
-    display_name: Alice
+  grace:
+    display_name: Grace
     scope: adult
-    platform_ids: {matrix: '@alice:hs.org', email: Alice@Example.com, mattermost: 'nkq8wv2mxyz7abcde9jhtwr4o'}
+    platform_ids: {matrix: '@grace:hs.org', email: Grace@Example.com, mattermost: 'nkq8wv2mxyz7abcde9jhtwr4o'}
   bob:
     display_name: Bob
     scope: child
-    guardians: [alice]
+    guardians: [grace]
     platform_ids: {matrix: '@bob:hs.org', simplex: '7'}
 """
 
@@ -36,27 +36,27 @@ def manifest(tmp_path):
 
 
 def test_resolve_matrix_id(manifest):
-    ident = manifest.resolve("@alice:hs.org", "matrix")
-    assert ident.canonical == "alice"
+    ident = manifest.resolve("@grace:hs.org", "matrix")
+    assert ident.canonical == "grace"
     assert ident.scope == "adult"
-    assert ident.display_name == "Alice"
+    assert ident.display_name == "Grace"
 
 
 def test_resolve_case_insensitive_email(manifest):
-    ident = manifest.resolve("ALICE@example.com", "email")
-    assert ident is not None and ident.canonical == "alice"
+    ident = manifest.resolve("GRACE@example.com", "email")
+    assert ident is not None and ident.canonical == "grace"
 
 
 def test_email_without_platform_stated(manifest):
     # platform="" → ONLY homespaced Matrix IDs may cross-match; a bare email
     # must NOT resolve (cross-platform value match was the identity leak)
-    assert manifest.resolve("alice@example.com", "") is None
+    assert manifest.resolve("grace@example.com", "") is None
 
 
 def test_matrix_id_without_platform_stated(manifest):
     # platform="" with a homespaced Matrix ID still resolves (unambiguous)
-    ident = manifest.resolve("@alice:hs.org", "")
-    assert ident is not None and ident.canonical == "alice"
+    ident = manifest.resolve("@grace:hs.org", "")
+    assert ident is not None and ident.canonical == "grace"
 
 
 def test_opaque_platform_id_without_platform_stated(manifest):
@@ -64,7 +64,7 @@ def test_opaque_platform_id_without_platform_stated(manifest):
     # platform. A Mattermost id must still land on its user, not on a raw-id
     # orphan bucket.
     ident = manifest.resolve("nkq8wv2mxyz7abcde9jhtwr4o", "")
-    assert ident is not None and ident.canonical == "alice"
+    assert ident is not None and ident.canonical == "grace"
 
 
 def test_short_numeric_id_without_platform_stated_refused(manifest):
@@ -77,10 +77,10 @@ def test_unknown_user_returns_none(manifest):
 
 
 def test_guardian_reverse_map(manifest):
-    a = manifest.resolve("@alice:hs.org", "matrix")
+    a = manifest.resolve("@grace:hs.org", "matrix")
     b = manifest.resolve("@bob:hs.org", "matrix")
-    assert b.guardians == ["alice"]
-    assert a.guardian_of == ["bob"]  # alice is guardian of bob
+    assert b.guardians == ["grace"]
+    assert a.guardian_of == ["bob"]  # grace is guardian of bob
 
 
 def test_child_scope_preserved(manifest):
@@ -140,13 +140,13 @@ def test_load_manifest_ignores_roles(tmp_path):
     text = YAML + """
 """
     data = yaml.safe_load(text)
-    data["users"]["alice"]["roles"] = {"phoenix": {"role": "admin", "toolsets": ["*"]}}
+    data["users"]["grace"]["roles"] = {"phoenix": {"role": "admin", "toolsets": ["*"]}}
     p = tmp_path / "users.yaml"
     p.write_text(yaml.dump(data))
     m = load_manifest({"users_manifest": str(p)})
     assert m is not None
-    ident = m.resolve("@alice:hs.org", "matrix")
-    assert ident.canonical == "alice"
+    ident = m.resolve("@grace:hs.org", "matrix")
+    assert ident.canonical == "grace"
     assert not hasattr(ident, "roles")  # identity subset only
 
 
@@ -173,7 +173,7 @@ def test_provider_resolution_order(manifest, tmp_path, monkeypatch):
     assert canonical == "bob"
     assert scope == "child"
     # guardian reverse map through provider path
-    a = manifest.resolve_by_canonical("alice")
+    a = manifest.resolve_by_canonical("grace")
     assert a.guardian_of == ["bob"]
     p._storage.close()
 

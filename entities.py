@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 # Known entity patterns — CONFIG-DRIVEN, empty by default.
 # Deployments add personal/project names via limbic.yaml:
-#   known_entities: ["PERSON:Alice", "ORG:Acme Corp"]
+#   known_entities: ["PERSON:Grace", "ORG:Acme Corp"]
 # The plugin ships empty: no private names in a publishable tree.
 KNOWN_PATTERNS = []
 
