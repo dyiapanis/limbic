@@ -1,6 +1,6 @@
 # Limbic — Opaque Memory System Specification
 
-**Version 0.9.5** · Author: D Yiapanis · License: PolyForm Noncommercial 1.0.0
+**Version 0.9.5** · Author: D Yiapanis · License: MIT
 
 ## Overview
 

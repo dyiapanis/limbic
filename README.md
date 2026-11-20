@@ -3,7 +3,7 @@
 Self-Organising Memory for AI Agents
 
 **Version 0.9.5**
-Author: D Yiapanis · License: PolyForm Noncommercial 1.0.0 (source-available; commercial use requires a separate license)
+Author: D Yiapanis · License: MIT
 
 Limbic is a self-organising local memory system for AI agents. It stores facts, learns which ones matter through interaction, and surfaces the right context at the right time — without ever calling an LLM. Designed for [Hermes Agent](https://hermes-agent.nousresearch.com) and implements the upstream `MemoryProvider` ABC.
 
@@ -215,7 +215,7 @@ by intent:
 
 ## License
 
-PolyForm Noncommercial 1.0.0. Free for personal, research, educational, and noncommercial use. Commercial use requires a separate license.
+MIT. Free to use, modify, and distribute — including commercially — with attribution.
 
 ---
 
