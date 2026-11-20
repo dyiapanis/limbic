@@ -3,7 +3,7 @@ name: using-limbic
 description: "Use when the active memory provider is Limbic. Covers remember/recall tool usage, fact quality guidance, and operator CLI commands."
 version: 1.0.0
 author: Limbic
-license: PolyForm-Noncommercial-1.0.0
+license: MIT
 metadata:
   hermes:
     tags: [memory, limbic, remember, recall, facts]
