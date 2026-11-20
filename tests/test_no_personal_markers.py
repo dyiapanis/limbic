@@ -25,9 +25,22 @@ MARKERS = [
 ]
 
 
+def _packaged_files():
+    """No-git fallback (GitHub tarball/zip download): everything the archive
+    carries is published content — scan the tree, minus build/vendored noise."""
+    skip_dirs = {".git", "__pycache__", ".pytest_cache", ".ruff_cache", ".mypy_cache"}
+    for dirpath, dirnames, filenames in os.walk(reporoot):
+        dirnames[:] = [d for d in dirnames if d not in skip_dirs]
+        for name in filenames:
+            yield os.path.relpath(os.path.join(dirpath, name), reporoot).replace(os.sep, "/")
+
+
 def tracked_text_files():
-    out = subprocess.run(["git", "ls-files"], cwd=reporoot, capture_output=True,
-                         text=True, check=True).stdout.splitlines()
+    try:
+        out = subprocess.run(["git", "ls-files"], cwd=reporoot, capture_output=True,
+                             text=True, check=True).stdout.splitlines()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        out = list(_packaged_files())  # no working git — tarball is all tracked content anyway
     for path in out:
         if path.startswith("models/"):
             continue  # vendored spaCy package, not authored here
