@@ -129,5 +129,19 @@ class LimbicStorage:
         """Drop open links older than the TTL."""
         return 0
 
+    # ── Atrophy mutation surface (C4): implemented by SQLiteStorage ──
+
+    def mark_atrophy(self, fact_id: int) -> None:
+        pass
+
+    def unmark_atrophy(self, fact_id: int) -> None:
+        """Clear the mark after trust recovers above the threshold (C4)."""
+        pass
+
+    def sweep_atrophy(self, before_iso: str, limit: int = 3, user_id: str = "",
+                      exclude_ids: set[int] | None = None) -> int:
+        """Reap marks older than before_iso that pass the C4 reap guard."""
+        return 0
+
     def close(self) -> None:
         pass

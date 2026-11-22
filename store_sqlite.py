@@ -1173,34 +1173,54 @@ class SQLiteStorage(LimbicStorage):
             )
         return self._write_txn(_txn)
 
-    def sweep_atrophy(self, before_iso: str, limit: int = 3, user_id: str = "") -> int:
+    def unmark_atrophy(self, fact_id: int) -> None:
+        """Clear the mark after trust recovers above the threshold (C4) — the
+        sweep does not re-check trust, so a recovered mark must not ride the
+        old grace clock into the reap cohort."""
+        def _txn():
+            self._db.execute(
+                "UPDATE facts SET atrophy_marked_at = NULL WHERE fact_id = ?",
+                (fact_id,)
+            )
+        return self._write_txn(_txn)
+
+    def sweep_atrophy(self, before_iso: str, limit: int = 3, user_id: str = "",
+                      exclude_ids: set[int] | None = None) -> int:
         """Delete facts whose atrophy mark is older than before_iso.
 
-        Optional user_id scopes the sweep to that user; without it the
-        sweep is global (legacy callers). Single transaction — all-or-nothing.
+        C4 reap guard — a marked fact is never swept when it is
+        retrieval_count >= 5 (surfaced 5+ times), the older_fact_id of an
+        UNRESOLVED contradiction link, or explicitly excluded by the
+        provider (reap_guard_excludes: chain-collateral facts blessed for
+        retention by the C2 replay). Protected facts keep their mark parked;
+        the guard decides again on every sweep. Optional user_id scopes the
+        sweep to that user; without it the sweep is global (legacy callers).
+        Single transaction — all-or-nothing.
         """
         def _txn():
+            sql = """SELECT fact_id FROM facts
+                     WHERE atrophy_marked_at IS NOT NULL
+                     AND atrophy_marked_at < ?
+                     AND COALESCE(retrieval_count, 0) < 5
+                     AND NOT EXISTS (
+                       SELECT 1 FROM contradictions c
+                       WHERE c.older_fact_id = facts.fact_id
+                         AND c.resolved_at IS NULL)"""
+            where: list = []
+            params: list = [before_iso]
             if user_id:
-                rows = self._db.execute(
-                    """SELECT fact_id FROM facts
-                       WHERE atrophy_marked_at IS NOT NULL
-                       AND atrophy_marked_at < ?
-                       AND user_id = ?
-                       LIMIT ?""",
-                    (before_iso, user_id, limit)
-                ).fetchall()
-            else:
-                rows = self._db.execute(
-                    """SELECT fact_id FROM facts
-                       WHERE atrophy_marked_at IS NOT NULL
-                       AND atrophy_marked_at < ?
-                       LIMIT ?""",
-                    (before_iso, limit)
-                ).fetchall()
+                where.append("user_id = ?")
+                params.append(user_id)
+            for w in where:
+                sql += f"\nAND {w}"
+            rows = self._db.execute(sql + " LIMIT ?", (*params, limit)).fetchall()
 
+            guard = set(exclude_ids or ())
             deleted = 0
             for r in rows:
                 fid = r["fact_id"]
+                if fid in guard:
+                    continue  # excluded cohort: mark stays parked, never swept
                 self._db.execute("DELETE FROM facts WHERE fact_id = ?", (fid,))
                 self._db.execute("DELETE FROM vec_index WHERE rowid = ?", (fid,))
                 deleted += 1
