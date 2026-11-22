@@ -180,7 +180,7 @@ def test_remember_resolves_raw_platform_id_to_canonical(provider, tmp_path):
     provider._manifest = UserManifest(str(path), cfg)
     provider._current_user_id = "nkq8wv2mxyz7abcde9jhtwr4o"  # the poisoning case
 
-    r = provider.remember("raw id write must land on a real scope",
+    r = provider.remember("raw id write must land on a real scope bucket",
                           user_id="nkq8wv2mxyz7abcde9jhtwr4o")
 
     assert provider._storage.count("grace") == 1, r
