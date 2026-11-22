@@ -181,7 +181,7 @@ class _WriteStorage:
     def get_all_embeddings(self, user_id):
         return []
 
-    def store(self, content, user_id, embedding, metadata):
+    def store(self, content, user_id, embedding, metadata, principal_vouched=False):
         fid = self.next_id
         self.next_id += 1
         self.stored.append((fid, content))

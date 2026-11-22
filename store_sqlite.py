@@ -585,8 +585,8 @@ class SQLiteStorage(LimbicStorage):
     # ── Core CRUD ──────────────────────────────────────────────────
 
     def store(self, content: str, user_id: str, embedding: list[float],
-              metadata: dict) -> int:
-        if room_shaped_user_id(user_id):
+              metadata: dict, principal_vouched: bool = False) -> int:
+        if room_shaped_user_id(user_id) and not principal_vouched:
             raise ValueError(
                 f"user-scope boundary: room-shaped user_id {user_id!r} "
                 "cannot own facts (wrong-principal scope)")
@@ -624,7 +624,8 @@ class SQLiteStorage(LimbicStorage):
         return self._write_txn(_txn)
 
     def store_split(self, content: str, user_id: str,
-                    children: list[dict]) -> dict:
+                    children: list[dict],
+                    principal_vouched: bool = False) -> dict:
         """Atomic soft-split write (sprint C5).
 
         One transaction lands the parent provenance row (content-only, NO
@@ -641,7 +642,7 @@ class SQLiteStorage(LimbicStorage):
         similarity scans already ran and excluded each other (provider side);
         what arrives here is only the pre-decided write.
         """
-        if room_shaped_user_id(user_id):
+        if room_shaped_user_id(user_id) and not principal_vouched:
             raise ValueError(
                 f"user-scope boundary: room-shaped user_id {user_id!r} "
                 "cannot own facts (wrong-principal scope)")

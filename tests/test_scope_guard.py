@@ -184,3 +184,27 @@ def test_no_reachable_write_path_emits_room_ids(provider):
     assert uids == ["grace"], uids  # only the scope owner; nothing room-shaped
     for uid in uids:
         assert not room_shaped_user_id(uid), uids
+
+
+def test_manifest_canonical_skips_room_shape(provider):
+    """Review finding P6: a registered manifest canonical whose name happens
+    to be 18+ chars of pure alpha must NOT be mistaken for a room — the
+    manifest claim outranks the shape heuristic."""
+    canonical = "constantinamargaret"
+    provider._manifest._users[canonical] = {
+        "display_name": "Constantina Margaret", "scope": "adult",
+        "platform_ids": {"matrix": f"@{canonical}:example.org"}, "guardians": [],
+    }
+    out = provider.remember("Constantina Margaret prefers still water.", user_id=canonical)
+    assert out.get("status") == "stored", out
+    assert provider._storage.count(canonical) == 1
+
+
+def test_boundary_refuses_unvouched_room_ids(provider):
+    """Control for the vouch: the storage boundary stays fail-closed for
+    direct callers — a room id raises even when a provider manifest exists;
+    only remember()'s manifest-confirmed canonicals carry the vouch."""
+    storage = provider._storage
+    with pytest.raises(ValueError, match="room-shaped user_id"):
+        storage.store("hallway note", ROOM_MM_ID,
+                      [0.1] * 4, {"trust_score": 0.5})
