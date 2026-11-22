@@ -599,8 +599,14 @@ class LimbicMemoryProvider(MemoryProvider):
                 # ── Correction detected ────────────────────────────────
                 # Penalise the old fact's trust so it fades. Store the new fact
                 # (don't deduplicate) so the correction can mature and replace it.
+                # Floored like the interference dock: repeated supersession
+                # chains must not grave the fact below the correction floor,
+                # and min(old, floor) never raises an already-lower fact.
                 penalty = self._trust.correction_penalty_value()
-                new_trust = max(0.0, old_trust - penalty)
+                new_trust = max(
+                    min(old_trust, self._trust.correction_floor_value()),
+                    old_trust - penalty,
+                )
 
                 self._storage.update(existing["fact_id"], trust_score=new_trust)
                 logger.debug(
@@ -1346,9 +1352,11 @@ class LimbicMemoryProvider(MemoryProvider):
             overlap = self._trust.text_overlap(fact.get("content", ""), user_message)
 
             if is_correction and overlap > 0.3:
-                # Regex-based correction — devalue trust
-                new_trust = max(0.0, fact.get("trust_score", 0.5) -
-                                self._trust.correction_penalty_value())
+                # Regex-based correction — devalue trust (same correction floor
+                # as the NLI dock: sibling paths inherit the bound, not the fix)
+                old = fact.get("trust_score", 0.5)
+                new_trust = max(min(old, self._trust.correction_floor_value()),
+                                old - self._trust.correction_penalty_value())
                 self._storage.update(fact_id, trust_score=new_trust)
                 self._trust.record_signal(fact_id, was_continuation=False, was_correction=True)
                 # Organic atrophy: evaluate the corrected fact against existing criteria
@@ -1405,17 +1413,19 @@ class LimbicMemoryProvider(MemoryProvider):
         that persists after the write.
 
         Two terminal conditions, either of which resolves the link:
-          - the correction landed: older fact's trust has fallen below the floor
+          - the correction landed: older fact's trust has reached the
+            correction floor (a floored fact resolves instead of spinning —
+            an un-resolvable clamp would eat the per-turn budget forever)
           - the correction is stale: NLI no longer agrees the pair contradicts
         One non-terminal case re-asserts the penalty: the older fact recovered
-        above the floor AND NLI still confirms the contradiction.
+        above the correction floor AND NLI still confirms the contradiction.
         """
         if not self._storage or not self._trust:
             return
 
         max_per_turn = int(self._trust.get("max_corrections_per_turn"))
         ttl_days = int(self._trust.get("correction_link_ttl_days"))
-        floor = self._trust.get("relevance_floor")
+        floor = self._trust.correction_floor_value()
 
         try:
             # Expire stale links first so the bounded query below spends its
