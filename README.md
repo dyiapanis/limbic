@@ -16,7 +16,7 @@ Limbic is inspired by the brain's limbic system:
 - **Hippocampus** (encoding) — `remember()` embeds, checks interference, and stores
 - **Amygdala** (salience) — trust scoring, self-tunes from use
 - **Thalamus** (retrieval) — `recall()` searches and gates by relevance
-- Atrophy — memories superseded, contradicted and unused fade and are progressively forgotten.
+- **Atrophy** — memories superseded, contradicted and unused fade and are progressively forgotten.
 
 The agent sees three tools (`remember`, `recall`, `forget`). The operator sees one file (`limbic.db`). Everything inside is self-organising.
 
