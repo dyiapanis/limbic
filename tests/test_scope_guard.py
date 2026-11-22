@@ -208,3 +208,19 @@ def test_boundary_refuses_unvouched_room_ids(provider):
     with pytest.raises(ValueError, match="room-shaped user_id"):
         storage.store("hallway note", ROOM_MM_ID,
                       [0.1] * 4, {"trust_score": 0.5})
+
+
+def test_resolved_canonical_skips_room_shape(provider):
+    """Round-2 finding: a RAW platform id that the manifest RESOLVES to a
+    room-shaped canonical must still store — the re-attribution claim
+    outranks the shape heuristic (vouch rides the resolution, not just the
+    listed name)."""
+    raw = "mmaaaa" + "a" * 18  # mm + 24 chars, resolvable via platform_ids
+    provider._manifest._by_platform[("mattermost", raw)] = "constantinamargaret"
+    provider._manifest._users["constantinamargaret"] = {
+        "display_name": "Constantina Margaret", "scope": "adult",
+        "platform_ids": {"mattermost": raw}, "guardians": [],
+    }
+    out = provider.remember("Constantina Margaret prefers still water.", user_id=raw)
+    assert out.get("status") == "stored", out
+    assert provider._storage.count("constantinamargaret") == 1, out

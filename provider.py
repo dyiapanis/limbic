@@ -383,6 +383,13 @@ class LimbicMemoryProvider(MemoryProvider):
                     # falling back to it is how an orphan bucket gets minted.
                     ident = manifest.resolve(str(uid), "")
                     fallback = ident.canonical if ident else self._current_user_id
+                    if ident is not None:
+                        # The manifest just resolved this id to a canonical —
+                        # that claim outranks the shape heuristic even when
+                        # the canonical name itself is room-shaped (the
+                        # round-2 probe: mattermost id → 19-char single-word
+                        # canonical → re-attribution must survive).
+                        manifest_ok = True
                     if fallback:
                         logger.warning(
                             "limbic: remember uid %r not in manifest — attributing to %s",
@@ -1456,8 +1463,9 @@ class LimbicMemoryProvider(MemoryProvider):
                 older_id = link["older_fact_id"]
                 older_trust = link.get("older_trust", 0.5)
 
-                # Landed — the corrected fact has faded.
-                if older_trust < floor:
+                # Landed — the corrected fact has faded (the committed
+                # measured predicate: landed when trust <= correction_floor).
+                if older_trust <= floor:
                     self._storage.resolve_contradiction(link["newer_fact_id"], older_id)
                     resolved += 1
                     continue
