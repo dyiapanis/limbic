@@ -739,6 +739,9 @@ class SQLiteStorage(LimbicStorage):
             parsed = []
             for r in results:
                 distance = r["distance"]
+                if distance is None:  # unparseable vec row: skip rather than crash the search path
+                    logger.warning("limbic: SQLite KNN row %s has NULL distance — skipped", r["fact_id"])
+                    continue
                 score = 1.0 - distance
                 parsed.append({
                     "fact_id": r["fact_id"],
