@@ -60,7 +60,7 @@ The authoritative mapping — region → process → code symbol — is `limbic/
 - **NLI-aware interference and correction detection** — for each similar existing fact (similarity > 0.60), an NLI cross-encoder classifies the relationship as contradiction, entailment, or neutral. The label determines the action (see NLI-aware flow below).
 - Bayesian surprise computed — novel facts get trust boost
 - Stored in SQLite with embedding, content, user_id, trust, activation, timestamps
-- **Named entities extracted via spaCy NER** — EntityRuler with custom fleet patterns (user names, project names, products) layered on top of statistical NER. Entities stored in `entities` table, fact↔entity links in `mentions` junction table. This is the hippocampal spatial map — each fact is located relative to the entities it mentions.
+- **Named entities extracted via spaCy NER** — EntityRuler with custom fleet patterns (user names, project names, products) layered on top of statistical NER. Entities stored in `entities` table, fact↔entity links in `mentions` junction table. This is the hippocampal spatial map — each fact is located relative to the entities it mentions. Junk classes are filtered at extraction and never stored: single-char tokens, pure number/price tokens, number-word/function-word tokens, and the number/quantity NE labels (CARDINAL, ORDINAL, MONEY, PERCENT, QUANTITY) — extensible per deployment via `entity_junk_words`.
 - Initial trust: 0.5 (or 0.6 if high surprise)
 - Initial activation: 0.03 (silent engram)
 
@@ -397,6 +397,7 @@ forget(user_id: str) → {"removed": N, "status": "complete"}
 export(user_id: str) → {"facts": [...], "fact_count": N}
 seed(user_id: str, content: str) → {"status": "stored"}
 reindex(provider: str, **config) → {"reindexed": N, "status": "complete"}
+gc_entities(apply: bool) → {"junk_entities": N, "orphan_entities": N, "orphan_mentions": N, ...}
 stats(user_id: str | None) → {"total_facts": N, "avg_trust": F, "matured": N, ...}
 ```
 
@@ -406,6 +407,12 @@ stats(user_id: str | None) → {"total_facts": N, "avg_trust": F, "matured": N, 
 - `seed` — inject facts without conversation. For migration or operator-initiated context loading.
 - `reindex` — re-embed all facts with the bundled model (optionally at new dims). Creates a new `vec_index`, re-embeds, swaps atomically, drops the old index. The FTS and fact rows are untouched.
 - `stats` — analytical self-evaluation. Per-user or aggregate metrics for performance monitoring.
+- `gc_entities` — entity-graph hygiene (`hermes limbic entities [--gc] [--apply]`).
+  Sweeps the junk classes that predate the extraction filter (number/price
+  tokens, number-words, function words) plus orphaned mention/entity rows;
+  junk entities cascade their mention rows. Counts are measured live in the
+  sweep transaction; default is a read-only report, `--gc` previews, `--gc
+  --apply` deletes.
 
 ### Config (environmental conditions)
 
@@ -427,6 +434,7 @@ nli:
 # Entity extraction — spaCy models per language
 nlp:
   languages: [en]
+entity_junk_words: []        # extra tokens the entity filter rejects (extends the defaults)
 
 # Environmental conditions — system adapts within these bounds
 context_budget: 20           # like pot size — ceiling on facts in awareness per turn
