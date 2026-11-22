@@ -169,7 +169,11 @@ class LimbicMemoryProvider(MemoryProvider):
                     label, _, pat = str(entry).partition(":")
                     if label and pat:
                         patterns.append({"label": label.strip(), "pattern": pat.strip()})
-                self._entity_extractor = EntityExtractor(languages=languages, known_patterns=patterns)
+                self._entity_extractor = EntityExtractor(
+                    languages=languages,
+                    known_patterns=patterns,
+                    junk_words=[str(w).strip() for w in (self._config.get("entity_junk_words") or []) if str(w).strip()],
+                )
             except Exception as e:
                 logger.warning("limbic: entity extractor init failed: %s", e)
                 self._entity_extractor = None
@@ -2167,6 +2171,11 @@ class LimbicMemoryProvider(MemoryProvider):
                 "description": "Extra entity patterns as 'LABEL:pattern' strings, comma-separated (e.g. 'PERSON:Grace,ORG:Acme Corp'). Deployments configure; plugin default is empty.",
                 "default": "",
             },
+            {
+                "key": "entity_junk_words",
+                "description": "Extra junk words the entity filter should reject (comma-separated, e.g. 'wombat,project-slug'). EXTENDS the defaults (numbers/units/function words/number-words); defaults are never removable.",
+                "default": "",
+            },
         ]
 
     def save_config(self, values: dict[str, Any], hermes_home: str) -> None:
@@ -2193,6 +2202,8 @@ class LimbicMemoryProvider(MemoryProvider):
             config["known_users"] = [u.strip() for u in str(values["known_users"]).split(",") if u.strip()]
         if "known_entities" in values:
             config["known_entities"] = [e.strip() for e in str(values["known_entities"]).split(",") if e.strip()]
+        if "entity_junk_words" in values:
+            config["entity_junk_words"] = [w.strip() for w in str(values["entity_junk_words"]).split(",") if w.strip()]
         if "nlp_languages" in values:
             langs = [l.strip() for l in str(values["nlp_languages"]).split(",") if l.strip()]
             config["nlp"] = {"languages": langs}
