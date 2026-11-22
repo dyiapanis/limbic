@@ -21,6 +21,7 @@ from agent.memory_provider import MemoryProvider, RecallStatus
 
 from .embeddings import create_embedder, LimbicEmbedder
 from .nli import create_nli_classifier, LimbicNLI
+from .splitting import split_structured
 from .storage import LimbicStorage
 from .trust import TrustEngine
 
@@ -349,6 +350,13 @@ class LimbicMemoryProvider(MemoryProvider):
             logger.info("limbic: guardian write — fact about %s stored under %s (told by %s)",
                         target_user, target_user, uid)
             uid = target_user
+        # Atomic soft-split (sprint C5): long content with DETECTED structure
+        # (sections/lists/paragraphs) embeds better as child facts. Single
+        # narratives fall through to the whole-fact path unchanged.
+        split_result = self._plan_soft_split(content, uid)
+        if split_result is not None:
+            return split_result
+
 
         # Generate embedding
         embedding = self._embedder.embed(content)
@@ -362,24 +370,78 @@ class LimbicMemoryProvider(MemoryProvider):
             limit=5,
         )
 
-        # ── NLI-aware interference and correction detection ────────
-        #
-        # The flow runs NLI at every similarity band above 0.60 and branches
-        # on the label:
-        #
-        #   contradiction → store correction + penalise old fact's trust
-        #   entailment    → consistent — no penalty (store new fact normally)
-        #   neutral       → depends on similarity band:
-        #     >0.85  → interference penalty (high similarity, not related = replacement)
-        #     >0.70  → deduplicate (same topic, not related = redundant)
-        #     >0.60  → no action (related but distinct — store normally)
-        #
-        # Contradictions are NEVER deduplicated — the correction must be stored
-        # so it can mature and replace the stale fact through trust dynamics.
-        #
-        # This runs at WRITE TIME, so it works in all session types — not just
-        # continuous gateway sessions.
+        # Write-time NLI interference/correction decision (mechanism doc on
+        # _nli_scan; the split path reuses the SAME helper against the
+        # pre-insert store).
+        scan = self._nli_scan(similar, content)
+        if scan["decision"] == "dedup":
+            return {"status": "deduplicated", "fact_id": scan["dedup_fact_id"]}
+        contradicted_ids = scan["contradicted_ids"]
 
+        # Bayesian surprise — how novel is this fact?
+        surprise = self._compute_surprise(embedding, uid)
+        initial_trust = 0.5
+        if surprise > self._trust.surprise_percentile_value():
+            initial_trust = 0.5 + self._trust.surprise_boost_value()
+
+        # Store
+        fact_id = self._storage.store(
+            content=content,
+            user_id=uid,
+            embedding=embedding,
+            metadata={
+                "trust_score": initial_trust,
+                "retrieval_count": 0,
+                "created_at": _now_iso(),
+            },
+        )
+
+        logger.debug("limbic: stored fact_id=%d user=%s trust=%.2f surprise=%.2f",
+                     fact_id, uid, initial_trust, surprise)
+
+        # Continuing correction: link this fact to each older fact it contradicts.
+        # The write-time penalty above is one-shot; the link is what lets the tick
+        # re-assert the correction if the older fact's trust recovers later.
+        for older_id in contradicted_ids:
+            try:
+                self._storage.link_contradiction(fact_id, older_id)
+            except Exception as e:
+                logger.warning("limbic: could not link contradiction %d→%d: %s",
+                               fact_id, older_id, e)
+
+        # Extract entities and create graph edges (NLP)
+        if self._entity_extractor and self._entity_extractor.available:
+            entities = self._entity_extractor.extract(content)
+            if entities:
+                self._storage.store_entities(fact_id, entities)
+                logger.debug("limbic: extracted %d entities from fact %d",
+                             len(entities), fact_id)
+
+        return {"status": "stored", "fact_id": fact_id}
+
+    def _nli_scan(self, similar: list[dict], content: str) -> dict:
+        """Write-time NLI interference/correction decision for ONE candidate
+        fact, shared by the whole-fact path and the split path (sprint C5
+        calls it per child against the PRE-insert store — siblings do not
+        exist yet, which is the sibling exclusion).
+
+        The flow runs NLI at every similarity band above 0.60 and branches
+        on the label:
+
+          contradiction → store correction + penalise old fact's trust
+          entailment    → consistent — no penalty (store new fact normally)
+          neutral       → depends on similarity band:
+            >0.85  → interference penalty (high similarity, not related = replacement)
+            >0.70  → deduplicate (same topic, not related = redundant)
+            >0.60  → no action (related but distinct — store normally)
+
+        Contradictions are NEVER deduplicated. Penalties on pre-existing
+        facts are applied immediately (same semantics as this path always
+        had); the return carries the decision about the CANDIDATE only:
+            {"decision": "store"} — "contradicted_ids" to link once the
+                                    candidate has a fact_id
+            {"decision": "dedup"} — candidate redundant; "dedup_fact_id"
+        """
         should_deduplicate = False
         dedup_fact_id = None
         # Older facts NLI flagged as contradicted by this write. The link cannot
@@ -484,51 +546,88 @@ class LimbicMemoryProvider(MemoryProvider):
                     should_deduplicate = True
                     dedup_fact_id = existing["fact_id"]
                 # 0.60-0.70 neutral: store normally — related but distinct
-
-        # Check deduplication result
         if should_deduplicate:
-            return {"status": "deduplicated", "fact_id": dedup_fact_id}
+            return {"decision": "dedup", "dedup_fact_id": dedup_fact_id,
+                    "contradicted_ids": contradicted_ids}
+        return {"decision": "store", "dedup_fact_id": None,
+                "contradicted_ids": contradicted_ids}
 
-        # Bayesian surprise — how novel is this fact?
-        surprise = self._compute_surprise(embedding, uid)
-        initial_trust = 0.5
-        if surprise > self._trust.surprise_percentile_value():
-            initial_trust = 0.5 + self._trust.surprise_boost_value()
+    def _plan_soft_split(self, content: str, uid: str) -> dict | None:
+        """Atomic soft-split path (sprint C5); None falls through to the
+        whole-fact write.
 
-        # Store
-        fact_id = self._storage.store(
-            content=content,
-            user_id=uid,
-            embedding=embedding,
-            metadata={
-                "trust_score": initial_trust,
-                "retrieval_count": 0,
-                "created_at": _now_iso(),
-            },
+        Sibling-exempt write path — review finding on the plain-sequential
+        design: siblings measure 0.70–0.85 cosine, so scanning AFTER insert
+        would NLI-dedup every later child (never stored) or dock an existing
+        fact as interference. Here EVERY child is embedded and similarity-
+        scanned BEFORE the first insert — siblings do not exist during any
+        scan and are structurally excluded. The single write (parent
+        provenance row, all children, their links) is ONE transaction in
+        store_split(): a mid-batch failure stores nothing.
+        """
+        frags = split_structured(
+            content,
+            min_total=int(self._config.get("split_threshold_chars", 700)),
+            min_child=int(self._config.get("split_child_min_chars", 120)),
         )
+        if not frags or len(frags) < 2:
+            return None
 
-        logger.debug("limbic: stored fact_id=%d user=%s trust=%.2f surprise=%.2f",
-                     fact_id, uid, initial_trust, surprise)
+        children: list[dict] = []
+        for frag in frags:
+            embedding = self._embedder.embed(frag)
+            if embedding is None:
+                return {"error": "Embedding generation failed"}
+            # Scan the CURRENT store only — siblings are still uninserted, so
+            # they cannot appear here; this is the sibling exclusion.
+            similar = self._storage.search(
+                embedding=embedding,
+                filters={"user_id": uid},
+                limit=5,
+            )
+            scan = self._nli_scan(similar, frag)
+            if scan["decision"] == "dedup":
+                # Redundant with a PRE-EXISTING fact (never a sibling, which
+                # is not in the store yet) — dropped the way a whole write
+                # would be; the parent keeps its full text.
+                continue
+            children.append({
+                "content": frag,
+                "embedding": embedding,
+                "trust_score": 0.5,
+                "contradictions": scan["contradicted_ids"],
+            })
 
-        # Continuing correction: link this fact to each older fact it contradicts.
-        # The write-time penalty above is one-shot; the link is what lets the tick
-        # re-assert the correction if the older fact's trust recovers later.
-        for older_id in contradicted_ids:
-            try:
-                self._storage.link_contradiction(fact_id, older_id)
-            except Exception as e:
-                logger.warning("limbic: could not link contradiction %d→%d: %s",
-                               fact_id, older_id, e)
+        if not children:
+            # Every section matched an existing fact — the split carries no
+            # novel information; report it as a plain dedup instead of
+            # minting a parent row for nothing.
+            return {"status": "deduplicated", "deduplicated_parts": len(frags)}
 
-        # Extract entities and create graph edges (NLP)
+        stored = self._storage.store_split(content, uid, children)
+        logger.debug("limbic: stored split parent=%d children=%d user=%s",
+                     stored["parent_fact_id"], len(stored["child_fact_ids"]), uid)
+
+        # Entities per child — post-transaction, best effort (same posture as
+        # the whole-fact path's post-store extraction).
         if self._entity_extractor and self._entity_extractor.available:
-            entities = self._entity_extractor.extract(content)
-            if entities:
-                self._storage.store_entities(fact_id, entities)
-                logger.debug("limbic: extracted %d entities from fact %d",
-                             len(entities), fact_id)
+            for child_id, child in zip(stored["child_fact_ids"], children):
+                try:
+                    entities = self._entity_extractor.extract(child["content"])
+                    if entities:
+                        self._storage.store_entities(child_id, entities)
+                        logger.debug("limbic: extracted %d entities from split child %d",
+                                     len(entities), child_id)
+                except Exception as e:
+                    logger.warning("limbic: split child %d entity extraction failed: %s",
+                                   child_id, e)
 
-        return {"status": "stored", "fact_id": fact_id}
+        return {
+            "status": "stored_split",
+            "parent_fact_id": stored["parent_fact_id"],
+            "child_fact_ids": stored["child_fact_ids"],
+        }
+
 
     def _compute_surprise(self, embedding: list[float], user_id: str) -> float:
         """Bayesian surprise — how novel is this fact relative to the user's existing facts?
@@ -758,7 +857,12 @@ class LimbicMemoryProvider(MemoryProvider):
                                                top_row),
                     "best_excerpt": (top_row.get("content") or "")[:120]}
         return {
-            "results": [{"content": r["content"]} for r in results],
+            "results": [
+                {**({"parent_fact_id": r["split_parent_id"]}
+                    if r.get("split_parent_id") else {}),
+                 "content": r["content"]}
+                for r in results
+            ],
             "count": len(results),
             "status": "ok",
             "top_score": round(top, 4),

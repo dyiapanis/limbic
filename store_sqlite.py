@@ -419,6 +419,17 @@ class SQLiteStorage(LimbicStorage):
             if legacy in cols:
                 db.execute(f"ALTER TABLE facts DROP COLUMN {legacy}")
 
+        # Split provenance (sprint C5): children of an atomic soft-split carry
+        # the parent fact's id; the parent row itself is provenance-only —
+        # deliberately NO vec_index row (so it can never surface in KNN) plus
+        # split_role='parent' (so orphan diagnostics can tell intent from a
+        # broken write, and FTS/graph lanes can exclude it).
+        cols = {r["name"] for r in db.execute("PRAGMA table_info(facts)").fetchall()}
+        if "split_parent_id" not in cols:
+            db.execute("ALTER TABLE facts ADD COLUMN split_parent_id INTEGER")
+        if "split_role" not in cols:
+            db.execute("ALTER TABLE facts ADD COLUMN split_role TEXT")
+
         # FTS5 virtual table for full-text search (external content table)
         db.execute("""
             CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
@@ -589,6 +600,67 @@ class SQLiteStorage(LimbicStorage):
             return fact_id
         return self._write_txn(_txn)
 
+    def store_split(self, content: str, user_id: str,
+                    children: list[dict]) -> dict:
+        """Atomic soft-split write (sprint C5).
+
+        One transaction lands the parent provenance row (content-only, NO
+        vec_index row, split_role='parent' — it can never surface in recall)
+        plus every child fact with its own embedding, provenance columns and
+        per-child contradiction links. Either everything lands or nothing
+        does — a mid-batch failure (dim mismatch, corruption) rolls the
+        parent and all siblings back. Trust penalties on pre-existing facts
+        were applied during the pre-insert scan (provider side), as on the
+        whole-fact path.
+
+        children: [{"content", "embedding", "trust_score",
+                    "contradictions": [older_fact_id, ...]]} — sibling
+        similarity scans already ran and excluded each other (provider side);
+        what arrives here is only the pre-decided write.
+        """
+        now_iso = _now_iso()
+
+        def _txn():
+            cur = self._db.execute(
+                """INSERT INTO facts (content, user_id, trust_score,
+                   retrieval_count, last_retrieved, matured_at,
+                   atrophy_marked_at, created_at, updated_at,
+                   split_parent_id, split_role)
+                   VALUES (?, ?, 0.5, 0, NULL, NULL, NULL, ?, ?, NULL, 'parent')""",
+                (content, user_id, now_iso, now_iso),
+            )
+            parent_id = int(cur.lastrowid or 0)
+
+            child_ids = []
+            for ch in children:
+                ccur = self._db.execute(
+                    """INSERT INTO facts (content, user_id, trust_score,
+                       retrieval_count, last_retrieved, matured_at,
+                       atrophy_marked_at, created_at, updated_at,
+                       split_parent_id, split_role)
+                       VALUES (?, ?, ?, 0, NULL, NULL, NULL, ?, ?, ?, 'child')""",
+                    (ch["content"], user_id,
+                     ch.get("trust_score", 0.5), now_iso, now_iso, parent_id),
+                )
+                child_id = int(ccur.lastrowid or 0)
+                # A failure here (e.g. dim mismatch) rolls the whole split —
+                # parent, siblings, links — back together via _write_txn.
+                self._db.execute(
+                    "INSERT INTO vec_index(rowid, embedding) VALUES (?, ?)",
+                    (child_id, ch["embedding"]),
+                )
+                for older_id in ch.get("contradictions", []):
+                    self._db.execute(
+                        """INSERT OR IGNORE INTO contradictions
+                           (newer_fact_id, older_fact_id, created_at, nli_label, resolved_at)
+                           VALUES (?, ?, ?, 'contradiction', NULL)""",
+                        (child_id, older_id, now_iso),
+                    )
+                child_ids.append(child_id)
+
+            return {"parent_fact_id": parent_id, "child_fact_ids": child_ids}
+        return self._write_txn(_txn)
+
     def search(self, embedding: list[float], filters: dict, limit: int) -> list[dict]:
         with self._lock:
             query_vec = _serialize_vec(embedding)
@@ -605,7 +677,8 @@ class SQLiteStorage(LimbicStorage):
                        f.content, f.user_id, f.trust_score,
                        f.retrieval_count, f.last_retrieved,
                        f.matured_at, f.atrophy_marked_at,
-                       f.created_at, f.updated_at
+                       f.created_at, f.updated_at,
+                       f.split_parent_id
                 FROM (SELECT rowid, distance FROM vec_index WHERE embedding MATCH ? ORDER BY distance LIMIT ?) AS knn
                 JOIN facts f ON knn.rowid = f.fact_id
                 WHERE 1=1
@@ -654,6 +727,7 @@ class SQLiteStorage(LimbicStorage):
                     "score": score,
                     "vector_score": score,  # declared at the source: real cosine
                     "atrophy_marked_at": r["atrophy_marked_at"],
+                    "split_parent_id": r["split_parent_id"],
                 })
 
             return parsed
@@ -675,6 +749,8 @@ class SQLiteStorage(LimbicStorage):
                         "matured_at": row["matured_at"],
                         "created_at": row["created_at"],
                         "updated_at": row["updated_at"],
+                        "split_parent_id": row["split_parent_id"],
+                        "split_role": row["split_role"],
                     }
             except sqlite3.DatabaseError as e:
                 logger.error("limbic: get fact %d failed (possible corruption): %s", fact_id, e)
@@ -731,7 +807,8 @@ class SQLiteStorage(LimbicStorage):
             rows = self._db.execute(
                 """SELECT fact_id, content, user_id, trust_score,
                       retrieval_count, last_retrieved, matured_at,
-                      atrophy_marked_at, created_at, updated_at
+                      atrophy_marked_at, created_at, updated_at,
+                      split_parent_id, split_role
                    FROM facts WHERE user_id = ? ORDER BY fact_id""",
                 (user_id,)
             ).fetchall()
@@ -749,6 +826,8 @@ class SQLiteStorage(LimbicStorage):
                     "atrophy_marked_at": r["atrophy_marked_at"],
                     "created_at": r["created_at"],
                     "updated_at": r["updated_at"],
+                    "split_parent_id": r["split_parent_id"],
+                    "split_role": r["split_role"],
                 })
 
             return {"user_id": user_id, "fact_count": len(facts), "facts": facts}
@@ -1017,10 +1096,14 @@ class SQLiteStorage(LimbicStorage):
                        f.retrieval_count,
                        f.last_retrieved, f.matured_at, f.atrophy_marked_at,
                        f.created_at, f.updated_at,
+                       f.split_parent_id,
                        bm25(facts_fts) AS fts_score
                 FROM facts_fts
                 JOIN facts f ON facts_fts.rowid = f.fact_id
                 WHERE {where_clause}
+                -- split parents are provenance-only (sprint C5): they carry no
+                -- vector, so they must never surface through the FTS lane
+                  AND (f.split_role IS NULL OR f.split_role != 'parent')
                 ORDER BY fts_score
                 LIMIT {limit}
             """
@@ -1050,6 +1133,7 @@ class SQLiteStorage(LimbicStorage):
                     "score": r["fts_score"],
                     "vector_score": None,  # explicit absence: BM25 is not a cosine
                     "atrophy_marked_at": r["atrophy_marked_at"],
+                    "split_parent_id": r["split_parent_id"],
                 })
 
             return parsed
@@ -1126,9 +1210,13 @@ class SQLiteStorage(LimbicStorage):
             sql = f"""
                 SELECT fact_id, content, user_id, trust_score,
                        retrieval_count, last_retrieved, matured_at,
-                       atrophy_marked_at, created_at, updated_at
+                       atrophy_marked_at, created_at, updated_at,
+                       split_parent_id
                 FROM facts
                 WHERE fact_id IN ({placeholders})
+                  -- split parents are provenance-only (sprint C5) — no vector,
+                  -- never surface through the graph lane either
+                  AND (split_role IS NULL OR split_role != 'parent')
             """
             if where_clause:
                 sql += f" AND {where_clause}"
@@ -1159,6 +1247,7 @@ class SQLiteStorage(LimbicStorage):
                     "score": 0.0,
                     "vector_score": None,  # explicit absence: graph lane has no cosine
                     "atrophy_marked_at": r["atrophy_marked_at"],
+                    "split_parent_id": r["split_parent_id"],
                 })
 
             return parsed
@@ -1246,11 +1335,20 @@ class SQLiteStorage(LimbicStorage):
             with self._lock:
                 # Stream fact rows in batches: we hold only fact_id+content +
                 # the new embeddings, not the full result set.
-                cur = self._db.execute("SELECT fact_id, content FROM facts")
+                # split parents (sprint C5) are provenance-only: they carry
+                # deliberately no vector and are EXCLUDED from re-embedding so
+                # they never re-enter vec_index; total counts them only for the
+                # stream report.
+                cur = self._db.execute(
+                    "SELECT fact_id, content FROM facts "
+                    "WHERE split_role IS NULL OR split_role != 'parent'")
                 embedded: list[tuple[int, list[float]]] = []
                 total = 0
                 errors = 0
                 skipped_blank = 0
+                total += self._db.execute(
+                    "SELECT COUNT(*) FROM facts WHERE split_role = 'parent'"
+                ).fetchone()[0]
                 while True:
                     rows = cur.fetchmany(500)
                     if not rows:
