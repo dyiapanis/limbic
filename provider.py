@@ -569,7 +569,7 @@ class LimbicMemoryProvider(MemoryProvider):
         p_entail = 0.0               # graded above tau — recorded in the evidence log
 
         # Correction cue is content-constant — evaluate once, not per
-        # similar-fact iteration (delegate review deleg_8b449d32 amendment).
+        # similar-fact iteration (review amendment).
         cued_correction = (self._trust is not None
                            and self._trust.is_correction(content))
 
