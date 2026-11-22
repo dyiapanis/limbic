@@ -63,10 +63,16 @@ DEFAULT_PARAMS = {
     "interference_floor":   {"value": 0.25, "min": 0.10, "max": 0.50},
     "surprise_boost":       {"value": 0.10, "min": 0.02, "max": 0.20},
     "surprise_percentile":  {"value": 0.90, "min": 0.80, "max": 0.99},
-    # Atrophy — facts are swept only when trust has fully decayed to zero
-    "atrophy_threshold":           {"value": 0.01, "min": 0.001, "max": 0.20},
+    # Atrophy — C4 recalibration (2026-11-22): the decay/mark/sweep path is
+    # healthy (verified live), but zero facts ever crossed the 0.01 operating
+    # point: band facts' anchors refresh every 1-6 days via injection while a
+    # 0.01 crossing needs 14-68+ uninterrupted anchor-days. 0.05 is the
+    # measured zombie band; grace_days >= 7 is the review window between mark
+    # and reap (no fictitious confirm actor). sweep_atrophy enforces the reap
+    # guard (open contradiction links, retrieval_count >= 5, exclude list).
+    "atrophy_threshold":           {"value": 0.05, "min": 0.001, "max": 0.20},
     "atrophy_horizon_multiplier":  {"value": 0,    "min": 0,    "max": 10},  # 0 = no horizon check, trust-only
-    "atrophy_grace_days":          {"value": 0,    "min": 0,    "max": 30},  # 0 = no grace, lifetime was the grace
+    "atrophy_grace_days":          {"value": 7,    "min": 0,    "max": 30},  # review window between mark and reap
     "max_atrophy_per_turn":        {"value": 10,   "min": 1,    "max": 20},
 }
 

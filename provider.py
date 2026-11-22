@@ -1283,6 +1283,7 @@ class LimbicMemoryProvider(MemoryProvider):
             decayed = 0
             healed = 0
             marked = 0
+            unmarked = 0
             for row in rows:
                 old_trust = row.get("trust_score", 0.5)
                 last_retrieved = row.get("last_retrieved")
@@ -1326,6 +1327,20 @@ class LimbicMemoryProvider(MemoryProvider):
                 ):
                     self._storage.mark_atrophy(row["fact_id"])
                     marked += 1
+                elif (
+                    row.get("atrophy_marked_at")
+                    and not self._trust.is_atrophy_candidate(
+                        trust_score=new_trust,
+                        last_retrieved=last_retrieved,
+                        created_at=created_at,
+                    )
+                ):
+                    # C4: the sweep does not re-check trust, so a fact that
+                    # recovered above the threshold between mark and grace
+                    # must leave the reap cohort — otherwise the sweep would
+                    # delete a recovered fact.
+                    self._storage.unmark_atrophy(row["fact_id"])
+                    unmarked += 1
 
                 # Only write if the value actually changed (avoid unnecessary DB writes)
                 # Do NOT stamp last_retrieved here — decay is a metabolic process,
@@ -1341,8 +1356,9 @@ class LimbicMemoryProvider(MemoryProvider):
 
             if decayed:
                 logger.debug("limbic: applied temporal decay to %d facts (user=%s)", decayed, user_id)
-            if healed or marked:
-                logger.info("limbic: decay pass healed=%d newly_marked=%d (user=%s)", healed, marked, user_id)
+            if healed or marked or unmarked:
+                logger.info("limbic: decay pass healed=%d newly_marked=%d unmarked=%d (user=%s)",
+                            healed, marked, unmarked, user_id)
         except Exception as e:
             logger.debug("limbic: temporal decay failed: %s", e)
 
@@ -1350,22 +1366,34 @@ class LimbicMemoryProvider(MemoryProvider):
         """Sweep facts marked for atrophy whose grace period has elapsed.
 
         Runs every turn (via tick() → prefetch). Bounded by max_atrophy_per_turn.
-        Facts are marked during search when their effective trust decays below
-        threshold and their age exceeds the horizon. After a grace period,
-        they are physically deleted from the database.
+        Facts are marked during temporal decay (and at write time) when their
+        trust decays below the threshold. After a grace period they are
+        physically deleted from the database — except the C4 reap-guard cohort:
+        retrieval_count >= 5, unresolved contradiction links, and the
+        configured reap_guard_excludes (chain-collateral facts blessed for
+        retention) are never reaped here.
         """
         if not self._storage:
             return
         try:
             grace_days = self._trust.atrophy_grace_days()
             max_per_turn = self._trust.max_atrophy_per_turn()
+            excluded: set[int] = set()
+            for x in (self._config.get("reap_guard_excludes") or []):
+                try:
+                    excluded.add(int(x))
+                except (TypeError, ValueError):
+                    pass  # a malformed entry must not kill the sweep
 
             # Compute cutoff ISO: now - grace_days
             from datetime import datetime, timedelta, timezone
             cutoff = datetime.now(timezone.utc) - timedelta(days=grace_days)
             cutoff_iso = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-            deleted = self._storage.sweep_atrophy(cutoff_iso, limit=max_per_turn, user_id=user_id)
+            deleted = self._storage.sweep_atrophy(
+                cutoff_iso, limit=max_per_turn, user_id=user_id,
+                exclude_ids=excluded,
+            )
             if deleted:
                 self._atrophy_swept_count += deleted
                 logger.info("limbic: atrophied %d facts for user=%s", deleted, user_id)

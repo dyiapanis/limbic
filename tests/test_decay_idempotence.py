@@ -126,28 +126,29 @@ def test_backward_compatible_call_without_decayed_at(engine: TrustEngine):
 
 
 def test_fleet_survivor_scenario_no_longer_threatens_atrophy(engine: TrustEngine):
-    """Repeated prefetch must not walk trust below threshold.
+    """Repeated prefetch must not compound decay beyond the first day's charge.
 
-    8 facts sat at 0.0359 with a 3-day-old anchor. Under the bug, ~19 turns
-    crossed the 0.01 atrophy threshold. With a fixed anchor, repeat traffic
-    must hold steady once the day's decay is charged.
+    8 facts sat at 0.0359 with a 3-day-old anchor. Under the compounding bug,
+    ~19 turns crossed the old 0.01 atrophy threshold. With a fixed anchor,
+    repeat traffic charges exactly ONE day of decay and then holds.
+
+    C4 recalibrated the threshold to 0.05, so this survivor value
+    is intentionally INSIDE the atrophy band — marking is the mechanism; the
+    reap guard + 7-day grace decide who actually leaves.
     """
-    threshold = engine.get("atrophy_threshold")
     last_retrieved = _days_ago(3)
     created = _days_ago(32)
 
     trust = engine.apply_decay(0.0359, last_retrieved,
                                created_at=created, decayed_at=last_retrieved)
     charged = trust
+    assert charged == pytest.approx(0.0359 * 0.5 ** (3 / 30), abs=1e-4)
 
     for _ in range(40):
         trust = engine.apply_decay(trust, last_retrieved,
                                    created_at=created, decayed_at=_now())
 
     assert trust == pytest.approx(charged, abs=1e-9)
-    assert trust > threshold, (
-        f"40 turns drove trust to {trust:.6f}, below atrophy threshold {threshold}"
-    )
 
 def test_zero_half_life_disables_decay(tmp_path: Path):
     """half_life <= 0 is the documented kill switch and must be honoured.
