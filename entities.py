@@ -26,11 +26,69 @@ status (`entity_extraction`) and repairable post-hoc via `entities-backfill`.
 from __future__ import annotations
 
 import logging
+import re
 import unicodedata
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# ── NER junk filter ────────────────────────────────────────────────────
+#
+# Junk classes never leave extraction: pure numbers/units (NE labels and
+# no-letter digit tokens), number-words and function words, single-char
+# tokens. A live store was collecting exactly these (fixtures: "One",
+# "10", "then") — they are not graph coordinates, only noise edges that
+# orphan into the entities table. `entities --gc` sweeps what older writes
+# already stored; this filter stops the inflow.
+JUNK_NER_LABELS = frozenset({"CARDINAL", "ORDINAL", "MONEY", "PERCENT", "QUANTITY"})
+
+DEFAULT_JUNK_WORDS = frozenset("""
+    then now today yesterday tomorrow
+    one two three four five six seven eight nine ten
+    eleven twelve thirteen fourteen fifteen sixteen seventeen
+    eighteen nineteen twenty thirty forty fifty sixty seventy
+    eighty ninety hundred thousand million billion
+    first second third fourth fifth sixth seventh eighth ninth tenth
+    single several many much few half quarter twice
+""".split())
+
+_HAS_DIGIT = re.compile(r"\d")
+
+
+def is_junk_entity(name: str, ent_type: str = "", extra_words=None) -> bool:
+    """True when an extracted entity name falls in a junk class.
+
+    Classes: single-char; token with a digit but no letters ("10", "$40",
+    "50%", "16:00"); NER number/quantity labels (CARDINAL, ORDINAL, MONEY,
+    PERCENT, QUANTITY); number-word/function-word list ("One", "then").
+    Config supersedes nothing: `entity_junk_words` (limbic.yaml) only
+    EXTENDS the word list — the default classes always hold.
+    """
+    token = (name or "").strip()
+    if len(token) < 2:  # single-char
+        return True
+    if _HAS_DIGIT.search(token) and not any(ch.isalpha() for ch in token):
+        return True  # pure number/price/percent/time token
+    if (ent_type or "").strip().upper() in JUNK_NER_LABELS:
+        return True
+    if extra_words:
+        token_l = token.lower()
+        for word in extra_words:
+            w = str(word).strip().lower()
+            if w and token_l == w:
+                return True
+    return token.lower() in DEFAULT_JUNK_WORDS
+
+
+def junk_matcher(extra_words=None):
+    """Matcher for the gc sweep — same classes as extraction, plus config words."""
+    extras = [str(w) for w in (extra_words or []) if str(w).strip()]
+
+    def match(name: str, ent_type: str = "") -> bool:
+        return is_junk_entity(name, ent_type, extras)
+
+    return match
 
 # Known entity patterns — CONFIG-DRIVEN, empty by default.
 # Deployments add personal/project names via limbic.yaml:
@@ -94,12 +152,16 @@ class EntityExtractor:
         "multilingual": "xx_ent_wiki_sm",
     }
 
-    def __init__(self, languages: list[str] | None = None, known_patterns: list[dict] | None = None):
+    def __init__(self, languages: list[str] | None = None, known_patterns: list[dict] | None = None,
+                 junk_words: list[str] | None = None):
         self._pipelines: dict[str, object] = {}
         self._available = False
         # Config-driven patterns (limbic.yaml known_entities) override the
         # empty module default — deployments own their names, not the plugin.
         self._known_patterns = known_patterns or []
+        # Config junk words (limbic.yaml entity_junk_words) EXTEND the default
+        # classes; defaults are never removable.
+        self._junk_extra = [str(w).strip() for w in (junk_words or []) if str(w).strip()]
 
         languages = languages or ["en"]
         self._languages = list(languages)
@@ -205,6 +267,8 @@ class EntityExtractor:
                 name = ent.text.strip()
                 if not name or len(name) < 2:
                     continue
+                if is_junk_entity(name, ent.label_, self._junk_extra):
+                    continue  # junk class — never stored, gc sweeps legacy rows
                 # Deduplicate by (name, type) — spaCy can produce overlapping spans
                 key = (name.lower(), ent.label_)
                 if key in seen:

@@ -10,6 +10,7 @@ Available commands:
     reindex     Re-embed all facts with the bundled model
     fts-rebuild Rebuild the FTS5 full-text index
     entities-backfill  Populate entities/mentions for facts written while NLP was disabled
+    entities    Entity-graph hygiene: counts; --gc --apply sweeps junk/orphans
     quality     Store-quality metrics (read-only) + optional VACUUM INTO backup
     status      Show provider health and config summary
     languages   Show or set entity-extraction languages (e.g. en,fr,el)
@@ -268,6 +269,52 @@ def cmd_entities_backfill(args):
             new_e += max(0, after[0] - before[0])
             new_m += max(0, after[1] - before[1])
     print(f"OK: scanned {scanned} facts — new entities {new_e}, new mentions {new_m}")
+
+
+def cmd_entities(args):
+    """Entity-graph hygiene: counts by class; --gc --apply sweeps.
+
+    Default is a read-only report (junk entities, orphan mentions, orphan
+    entities measured live against the store — never a cached audit
+    snapshot). --gc previews the same classes; --gc --apply deletes (junk
+    entities first with their mention rows, then both orphan classes) and
+    re-verifies against a live re-measure. Never initialises the provider —
+    direct store handle, same resolution as cmd_quality.
+    """
+    hermes_home = _resolve_hermes_home(args)
+    db_path = getattr(args, "db", None) or str(Path(hermes_home) / "limbic.db")
+    if not Path(db_path).exists():
+        print(f"ERROR: store not found: {db_path}")
+        sys.exit(1)
+
+    from .entities import junk_matcher
+    from .store_sqlite import SQLiteStorage
+
+    extras: list[str] = []
+    yaml_path = Path(hermes_home) / "limbic.yaml"
+    if yaml_path.exists():
+        try:
+            import yaml
+            cfg = yaml.safe_load(yaml_path.read_text()) or {}
+            extras = [str(w) for w in (cfg.get("entity_junk_words") or [])]
+        except Exception:
+            pass
+
+    storage = SQLiteStorage(db_path)
+    try:
+        sweep = bool(getattr(args, "gc", False))
+        result = storage.gc_entities(
+            junk_match=junk_matcher(extras),
+            apply=bool(sweep and getattr(args, "apply", False)),
+        )
+    finally:
+        storage.close()
+
+    result["store"] = db_path
+    result["applied"] = bool(sweep and getattr(args, "apply", False))
+    print(json.dumps(result, indent=2, default=str))
+    if sweep and not getattr(args, "apply", False):
+        print("Dry run — run again with --apply to delete.")
 
 
 def cmd_status(args):
@@ -643,6 +690,15 @@ def register_cli(subparser) -> None:
     # entities-backfill (issue #18)
     p_eb = subs.add_parser("entities-backfill", help="Populate entities/mentions for facts written while NLP was disabled")
     p_eb.set_defaults(func=cmd_entities_backfill)
+
+    # entities — entity-graph hygiene: junk + orphan counts, optional --gc sweep
+    p_ent = subs.add_parser("entities", help="Entity-graph hygiene counts; --gc sweeps junk/orphans")
+    p_ent.add_argument("--db", help="Store path override (default: <hermes-home>/limbic.db)")
+    p_ent.add_argument("--gc", action="store_true",
+                       help="Sweep mode: junk + orphan classes (dry run unless --apply)")
+    p_ent.add_argument("--apply", action="store_true",
+                       help="Confirm the destructive sweep (with --gc)")
+    p_ent.set_defaults(func=cmd_entities)
 
     # status
     p_status = subs.add_parser("status", help="Show provider health and config")
