@@ -112,8 +112,9 @@ Operating points (defaults below; the engine adapts within them — tune via
 
 Corrections never dock a fact's trust below the floor; recall abstains when
 nothing is confident enough (silent beats wrong); fade-out marks at the
-atrophy threshold and reaps after the grace window unless the memory was
-recalled meanwhile.
+atrophy threshold and reaps after the grace window — a reap needs sustained
+disuse (recall count ≥ 5 or no contradiction link), so one stray recall
+still saves a memory.
 
 Adaptive parameters (decay half-life, relevance floor) are not static knobs — the trust engine tunes them in `limbic_params.json`.
 

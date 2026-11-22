@@ -10,7 +10,7 @@ class LimbicStorage:
     """Storage backend interface."""
 
     def store(self, content: str, user_id: str, embedding: list[float],
-              metadata: dict) -> int:
+              metadata: dict, principal_vouched: bool = False) -> int:
         raise NotImplementedError
 
     def search(self, embedding: list[float], filters: dict, limit: int) -> list[dict]:

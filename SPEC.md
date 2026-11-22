@@ -463,7 +463,8 @@ deploy-acceptance record for the sprint composition (`455e631..dev`).
 - **Split containers are ordinary facts (C5).** Split parent rows decay and
   fade like any other fact — the stored children carry the content, and
   `stats`/`export` still count the parent row once for that user (by design;
-  `parent_fact_id` marks it so operators can identify containers).
+  the `split_parent_id` / `split_role='parent'` columns identify containers
+  — `parent_fact_id` in tool output is the same field in API form).
 
 - **User-scope boundary guard (C8).** Room-shaped user_ids — Matrix `!` room
   ids and long opaque alphanumeric platform ids (`room_shaped_user_id()`) —
