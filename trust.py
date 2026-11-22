@@ -30,6 +30,13 @@ DEFAULT_PARAMS = {
     # Continuing correction — bounded re-check of open contradiction links.
     "max_corrections_per_turn": {"value": 3,  "min": 1,  "max": 10},
     "correction_link_ttl_days": {"value": 30, "min": 7,  "max": 90},
+    # Correction floor (measured 2026-11-22, fleet chain replay): a
+    # CONTRADICTION-confirmed dock is bounded like the interference dock —
+    # without a floor, repeated supersession chains ground correct, recalled
+    # facts to 0.02 (3 chain hits took a 0.5 fact to ~0.05; fixture:
+    # eval/chain_replay.json). Deliberately ABOVE relevance_floor (0.25):
+    # clamped-at-floor facts must not sit on the link-resolution boundary.
+    "correction_floor":     {"value": 0.30, "min": 0.10, "max": 0.50},
     "decay_half_life_days": {"value": 30,   "min": 7,    "max": 90},   # Ebbinghaus forgetting curve — half-life in days
     "retrieval_boost":      {"value": 0.02, "min": 0.005, "max": 0.05},
     "continuation_boost":   {"value": 0.03, "min": 0.01, "max": 0.08},
@@ -164,6 +171,9 @@ class TrustEngine:
 
     def correction_penalty_value(self) -> float:
         return self.get("correction_penalty")
+
+    def correction_floor_value(self) -> float:
+        return self.get("correction_floor")
 
     def interference_penalty_value(self) -> float:
         return self.get("interference_penalty")
