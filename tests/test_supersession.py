@@ -47,6 +47,9 @@ class _FakeTrust:
     def correction_penalty_value(self, *a, **k):
         return 0.15
 
+    def correction_floor_value(self, *a, **k):
+        return 0.30
+
     def interference_penalty_value(self, *a, **k):
         return 0.20
 
