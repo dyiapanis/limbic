@@ -10,13 +10,16 @@ Available commands:
     reindex     Re-embed all facts with the bundled model
     fts-rebuild Rebuild the FTS5 full-text index
     entities-backfill  Populate entities/mentions for facts written while NLP was disabled
+    quality     Store-quality metrics (read-only) + optional VACUUM INTO backup
     status      Show provider health and config summary
     languages   Show or set entity-extraction languages (e.g. en,fr,el)
 """
 from __future__ import annotations
 
+import argparse
 import json
 import re
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -375,6 +378,178 @@ def cmd_setup(args):
     print("\n✓ Setup complete. Run `hermes limbic status` to verify.")
 
 
+# ── quality (store-quality sprint C1) ───────────────────────────────
+#
+# Pinned metric definitions — the exact SQL the report runs. All reads are
+# read-only against limbic.db (the sanctioned forensic lane; this module
+# never writes a store — the only file it creates is a fresh VACUUM INTO
+# backup, and only when --backup-dir is given). `last_retrieved` is stored
+# ISO-8601 UTC ('YYYY-MM-DDTHH:MM:SS...'), so the stale-window cutoff is
+# strftime'd into the same T-format for a correct byte comparison.
+ROOM_ID_RE = re.compile(r"![^:]+:.+")
+ORPHAN_ENTITIES_SQL = (
+    "SELECT COUNT(*) FROM entities "
+    "WHERE entity_id NOT IN (SELECT DISTINCT entity_id FROM mentions)"
+)
+STALE_30D_SQL = (
+    "SELECT COUNT(*) FROM facts WHERE last_retrieved IS NULL "
+    "OR last_retrieved < strftime('%Y-%m-%dT%H:%M:%S', datetime('now','-30 days'))"
+)
+CONTRADICTION_EVENT_SQL = (
+    "SELECT (SELECT COUNT(*) FROM contradictions), "
+    "(SELECT COUNT(*) FROM contradictions WHERE resolved_at IS NULL), "
+    "(SELECT COUNT(DISTINCT fact_id) FROM "
+    "(SELECT newer_fact_id AS fact_id FROM contradictions "
+    "UNION SELECT older_fact_id FROM contradictions))"
+)
+TRUST_BUCKETS_SQL = (
+    "SELECT COUNT(*), COUNT(trust_score), MIN(trust_score), MAX(trust_score), "
+    "COALESCE(SUM(trust_score < 0.02), 0), "
+    "COALESCE(SUM(trust_score < 0.05), 0), "
+    "COALESCE(SUM(trust_score >= 0.05 AND trust_score < 0.20), 0), "
+    "COALESCE(SUM(trust_score >= 0.20 AND trust_score < 0.40), 0), "
+    "COALESCE(SUM(trust_score >= 0.40 AND trust_score < 0.60), 0), "
+    "COALESCE(SUM(trust_score >= 0.60 AND trust_score < 0.80), 0), "
+    "COALESCE(SUM(trust_score >= 0.80), 0) FROM facts"
+)
+LENGTH_BUCKETS_SQL = (
+    "SELECT COUNT(*), "
+    "COALESCE(SUM(LENGTH(content) < 40), 0), "
+    "COALESCE(SUM(LENGTH(content) >= 40 AND LENGTH(content) < 600), 0), "
+    "COALESCE(SUM(LENGTH(content) >= 600 AND LENGTH(content) < 1100), 0), "
+    "COALESCE(SUM(LENGTH(content) >= 1100), 0) FROM facts"
+)
+
+
+def quality_report(db_path) -> dict:
+    """Store-quality metrics for one limbic.db — read-only SQL, definitions pinned above."""
+    import statistics
+    from datetime import datetime, timezone
+    from urllib.parse import quote
+
+    con = sqlite3.connect(f"file:{quote(str(db_path))}?mode=ro", uri=True)
+    try:
+        total, have_trust, t_min, t_max, lt2, lt5, b1, b2, b3, b4, b5 = con.execute(TRUST_BUCKETS_SQL).fetchone()
+        trusts = [r[0] for r in con.execute("SELECT trust_score FROM facts WHERE trust_score IS NOT NULL")]
+        users_total = con.execute("SELECT COUNT(DISTINCT user_id) FROM facts").fetchone()[0]
+        ever, unresolved, involved = con.execute(CONTRADICTION_EVENT_SQL).fetchone()
+        never_recalled = con.execute("SELECT COUNT(*) FROM facts WHERE retrieval_count = 0").fetchone()[0]
+        stale_30d = con.execute(STALE_30D_SQL).fetchone()[0]
+        orphans = con.execute(ORPHAN_ENTITIES_SQL).fetchone()[0]
+        entities_total = con.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+        mentions_rows = con.execute("SELECT COUNT(*) FROM mentions").fetchone()[0]
+        l1, l2, l3, l4, l5 = con.execute(LENGTH_BUCKETS_SQL).fetchone()
+        users = [
+            {"user_id": r[0], "facts": r[1], "room_shaped": bool(ROOM_ID_RE.fullmatch(r[0] or ""))}
+            for r in con.execute("SELECT user_id, COUNT(*) AS n FROM facts GROUP BY user_id ORDER BY n DESC, user_id")
+        ]
+        matured, atrophy_marked = con.execute(
+            "SELECT COALESCE(SUM(matured_at IS NOT NULL), 0), "
+            "COALESCE(SUM(atrophy_marked_at IS NOT NULL), 0) FROM facts").fetchone()
+        newest = con.execute("SELECT MAX(created_at) FROM facts").fetchone()[0]
+    finally:
+        con.close()
+
+    def share(n, of):
+        return round(n / of, 4) if of else 0.0
+
+    room = [u for u in users if u["room_shaped"]]
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "store": str(db_path),
+        "facts_total": total,
+        "users_total": users_total,
+        "newest_fact": newest,
+        "trust": {
+            "mean": round(statistics.fmean(trusts), 4) if trusts else None,
+            "median": round(statistics.median(trusts), 4) if trusts else None,
+            "min": t_min, "max": t_max,
+            "buckets": {"<0.05": lt5, "0.05-0.20": b1, "0.20-0.40": b2, "0.40-0.60": b3,
+                        "0.60-0.80": b4, ">=0.80": b5, "none": total - have_trust},
+            "lt_0_02": lt2,
+            "zombie_lt_0_05_share": share(lt5, total),
+        },
+        "never_recalled": {
+            "count": never_recalled, "share": share(never_recalled, total),
+            "stale_30d": stale_30d, "stale_30d_share": share(stale_30d, total),
+        },
+        "contradictions": {
+            "total": ever, "unresolved": unresolved, "facts_involved": involved,
+            "density_per_fact": round(ever / total, 3) if total else None,
+            "events_per_involved_fact": round(ever / involved, 3) if involved else None,
+        },
+        "entities": {"total": entities_total, "orphans": orphans,
+                     "orphan_ratio": share(orphans, entities_total), "mentions_rows": mentions_rows},
+        "length": {
+            "buckets": {"<40": l2, "40-599": l3, "600-1099": l4, ">=1100": l5},
+            "shares": {"<40": share(l2, l1), "40-599": share(l3, l1),
+                       "600-1099": share(l4, l1), ">=1100": share(l5, l1)},
+        },
+        "users": users,
+        "room_shaped": {"user_ids": [u["user_id"] for u in room], "facts": sum(u["facts"] for u in room)},
+        "liveness": {"matured": matured, "atrophy_marked": atrophy_marked},
+    }
+
+
+def backup_store(db_path, dest_dir, profile=None) -> dict:
+    """Timestamped VACUUM INTO backup of one store.
+
+    Safe against a live WAL writer — the source is only ever read (a consistent
+    snapshot); VACUUM INTO writes the fresh destination file, never the source.
+    Verified before returning: integrity_check ok and fact count matches source.
+    """
+    from datetime import datetime, timezone
+    from urllib.parse import quote
+
+    src = Path(db_path)
+    dest_dir = Path(dest_dir)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    dest = dest_dir / f"{profile or src.parent.name}-{src.stem}-{ts}{src.suffix}"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    con = sqlite3.connect(f"file:{quote(str(src))}?mode=ro", uri=True)
+    try:
+        con.execute("VACUUM INTO ?", (str(dest),))
+        src_n = con.execute("SELECT COUNT(*) FROM facts").fetchone()[0]
+    finally:
+        con.close()
+    chk = sqlite3.connect(f"file:{quote(str(dest))}?mode=ro", uri=True)
+    try:
+        integrity = chk.execute("PRAGMA integrity_check").fetchone()[0]
+        dest_n = chk.execute("SELECT COUNT(*) FROM facts").fetchone()[0]
+    finally:
+        chk.close()
+    if integrity != "ok" or dest_n != src_n:
+        dest.unlink(missing_ok=True)
+        raise SystemExit(
+            f"ERROR: backup failed verification ({dest.name}): integrity={integrity}, facts {src_n}->{dest_n}")
+    return {"path": str(dest), "facts": dest_n, "integrity": integrity}
+
+
+def cmd_quality(args):
+    """Store-quality metrics report (read-only; sprint C1 instrument).
+
+    Deliberately does NOT initialise the provider — pure sqlite reads on the
+    resolved store, nothing the profile's running gateway can notice.
+    """
+    hermes_home = _resolve_hermes_home(args)
+    db_path = getattr(args, "db", None) or str(Path(hermes_home) / "limbic.db")
+    if not Path(db_path).exists():
+        print(f"ERROR: store not found: {db_path}")
+        sys.exit(1)
+    result = quality_report(db_path)
+    result["profile"] = Path(db_path).parent.name
+    backup_dir = getattr(args, "backup_dir", None)
+    if backup_dir:
+        result["backup"] = backup_store(db_path, backup_dir, result["profile"])
+    output = getattr(args, "output", None)
+    if output:
+        Path(output).write_text(json.dumps(result, indent=2, default=str))
+        print(f"Quality report written to {output}")
+    else:
+        print(json.dumps(result, indent=2, default=str))
+
+
 # ── Argparse registration ──────────────────────────────────────────
 
 
@@ -439,6 +614,13 @@ def register_cli(subparser) -> None:
     p_status = subs.add_parser("status", help="Show provider health and config")
     p_status.set_defaults(func=cmd_status)
 
+    # quality — store-quality sprint: read-only metrics + optional VACUUM INTO backup
+    p_quality = subs.add_parser("quality", help="Store-quality metrics (read-only) + optional VACUUM INTO backup")
+    p_quality.add_argument("--db", help="Store path override (default: <hermes-home>/limbic.db)")
+    p_quality.add_argument("--backup-dir", help="Timestamped VACUUM INTO backup of the store into this directory")
+    p_quality.add_argument("-o", "--output", help="Write the report JSON to a file")
+    p_quality.set_defaults(func=cmd_quality)
+
     # languages
     p_lang = subs.add_parser("languages", help="Show or set entity-extraction languages")
     p_lang.add_argument("--set", help="Comma-separated language codes (e.g. en,fr,el)")
@@ -447,3 +629,16 @@ def register_cli(subparser) -> None:
     # setup — one-shot install with progress: HF models + spacy models
     p_setup = subs.add_parser("setup", help="Download all models with progress")
     p_setup.set_defaults(func=cmd_setup)
+
+
+def main(argv=None):
+    """Standalone entry: `python3 -m limbic.cli quality …` — same argparse tree
+    the Hermes integration mounts via register_cli(subparser)."""
+    parser = argparse.ArgumentParser(prog="limbic", description="Limbic operator CLI")
+    register_cli(parser)
+    args = parser.parse_args(argv)
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()
