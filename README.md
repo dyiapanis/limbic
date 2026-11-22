@@ -24,9 +24,10 @@ The agent sees three tools (`remember`, `recall`, `forget`). The operator sees o
 - New memories start quiet and become easier to recall the more they're used
 - Similar memories compete — newer ones supersede older ones, older ones can block similar new ones
 - Novel facts get a trust boost; familiar ones don't
-- Corrections update trust without ever editing the stored fact
+- Corrections update trust without ever editing the stored fact — and never below a floor (0.30 default), so a bad edit can't erase a memory
 - Use keeps a memory alive, recall resets its decay clock, and reinforcement lifts its trust, so what matters rises while what does not fades.
-- A background sweep removes memories that have faded beyond recall.
+- A background sweep marks memories that have faded beyond recall and removes them after a review window (7 days) — being recalled during that window saves them.
+- Every memory is attributed to whoever said it: raw platform, room or host-minted ids are refused at the boundary, not minted into junk buckets
 - If nothing relevant exists for a query, recall says so (`no_confident_match`) rather than guessing
 - Relevance thresholds and decay rates tune themselves from use
 - Maturity is handled atomically by SQLite triggers
@@ -98,6 +99,17 @@ nlp:
 context_budget: 20              # ceiling on facts surfaced per turn
 fragment_gate_chars: 60         # remember() rejects content below BOTH fragment gates
 fragment_gate_words: 3
+```
+
+Operating points (all tunable in the same file; the engine adapts within them):
+
+```yaml
+trust:
+  correction_floor: 0.30        # corrections never dock a fact's trust below this
+  relevance_floor: 0.25         # minimum relevance to surface at all
+  recall_confidence_floor: 0.50 # silent beats wrong: recall abstains rather than guess
+  atrophy_threshold: 0.05       # fade-out operating point
+  atrophy_grace_days: 7         # marked facts get a recall window before removal
 ```
 
 Adaptive parameters (decay half-life, relevance floor) are not static knobs — the trust engine tunes them in `limbic_params.json`.
@@ -175,6 +187,13 @@ directory copy. Other plugins may read the same manifest for their own
 identity needs (workspace delivery routing, credential prefixes) — it is the
 one identity file in the stack.
 
+Identity is guarded end-to-end: a local same-uid peer (control-socket) is
+attributed through the manifest's `os_uid:` mapping, and any id that does
+not resolve to a person — raw platform ids, room ids, host-minted leftovers
+— is refused at the memory boundary instead of minting a junk bucket. An
+unmapped home fails closed: nothing is written rather than writing to the
+wrong person.
+
 ---
 
 ## Operator Functions
@@ -189,6 +208,8 @@ hermes limbic seed <user_id> <content>  # inject facts without conversation
 hermes limbic reindex                   # re-embed all facts with bundled model
 hermes limbic stats [user_id]           # per-user or aggregate metrics
 hermes limbic status [user_id]          # atrophy candidates, storage health
+hermes limbic entities                  # entity-graph counts
+hermes limbic entities --gc             # sweep junk/orphan entities (dry run; add --apply to commit)
 ```
 
 ### Deleting or correcting a wrong fact
@@ -210,8 +231,6 @@ by intent:
   it is stored, not after the week.
 
 ---
-
-## License
 
 ## License
 
