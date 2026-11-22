@@ -6,12 +6,15 @@ definition: trust buckets + zombie band, never-recalled/stale-30d window,
 contradiction density, orphan entities, length buckets, room-id user shape,
 and the VACUUM INTO backup roundtrip.
 """
+import contextlib
 import importlib.util
+import io
 import json
 import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -110,6 +113,54 @@ def test_quality_report_is_read_only(tmp_path):
     before = db.read_bytes()
     cli.quality_report(db)
     assert db.read_bytes() == before and set((db.parent).glob("*-wal*")) == set()
+
+
+def test_user_scoping_manifest(tmp_path):
+    cli = _load_cli()
+    manifest = tmp_path / "users.yaml"
+    manifest.write_text(
+        "users:\n"
+        "  u1:\n"
+        "    platform_ids:\n"
+        "      mattermost: abc123long\n"
+        "      matrix: '@u1x:example.org'\n"
+        "  u2:\n"
+        "    platform_ids: {}\n"
+    )
+    db = _store(tmp_path)  # users: u1(3), ROOM(1), u2(1) — none but u1 in manifest
+    cmd = SimpleNamespace(hermes_home=str(tmp_path), db=str(db), backup_dir=None,
+                          output=None, principals=str(manifest))
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        cli.cmd_quality(cmd)
+    r = json.loads(buf.getvalue())
+    # ROOM ('!abc:matrix.org') is room-shaped but NOT a principal in this manifest;
+    # canonical keys are principals even with empty platform_ids
+    assert r["user_scoping"]["non_principal_ids"] == [ROOM]
+    assert r["user_scoping"]["non_principal_facts"] == 1
+    # without a manifest the field is absent
+    cmd.principals = None
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        cli.cmd_quality(cmd)
+    assert "user_scoping" not in json.loads(buf.getvalue())
+
+
+def test_user_scoping_strips_matrix_pound(tmp_path):
+    """A platform id stored without '@' must still classify as principal."""
+    cli = _load_cli()
+    manifest = tmp_path / "users.yaml"
+    manifest.write_text("users:\n  u1:\n    platform_ids:\n      matrix: '@u1x:example.org'\n")
+    db = tmp_path / "limbic.db"
+    con = sqlite3.connect(db)
+    con.executescript(SCHEMA)
+    con.execute("INSERT INTO facts (content, user_id, created_at, updated_at) VALUES ('a','u1x:example.org','2026-01-01T00:00:00+00:00','x')")
+    con.execute("INSERT INTO facts (content, user_id, created_at, updated_at) VALUES ('b','@u1x:example.org','2026-01-02T00:00:00+00:00','x')")
+    con.commit(); con.close()
+    principals = cli._load_principals(manifest)
+    assert "u1x:example.org" in principals and "@u1x:example.org" in principals
+    r = json.loads(json.dumps(cli.quality_report(db)))
+    assert [u["room_shaped"] for u in r["users"]] == [False, False]
 
 
 def test_backup_store_roundtrip(tmp_path):
