@@ -526,6 +526,28 @@ def backup_store(db_path, dest_dir, profile=None) -> dict:
     return {"path": str(dest), "facts": dest_n, "integrity": integrity}
 
 
+def _load_principals(path):
+    """Parse a users.yaml manifest → the set of principal-scoped user_id values:
+    canonical keys + every platform_ids value (matrix user ids kept raw and
+    @-stripped). Pass the fleet manifest via --principals; no principal names
+    are ever written into this repo."""
+    import yaml
+
+    with open(path) as f:
+        manifest = yaml.safe_load(f) or {}
+    users = manifest.get("users", {}) or {}
+    ids = {u for u in users if isinstance(u, str)}
+    for u in users.values():
+        if not isinstance(u, dict):
+            continue
+        for v in (u.get("platform_ids") or {}).values():
+            if isinstance(v, str):
+                ids.add(v)
+                if v.startswith("@"):
+                    ids.add(v[1:])
+    return ids
+
+
 def cmd_quality(args):
     """Store-quality metrics report (read-only; sprint C1 instrument).
 
@@ -537,8 +559,20 @@ def cmd_quality(args):
     if not Path(db_path).exists():
         print(f"ERROR: store not found: {db_path}")
         sys.exit(1)
+    principals_path = getattr(args, "principals", None)
+    if principals_path and not Path(principals_path).exists():
+        print(f"ERROR: principals manifest not found: {principals_path}")
+        sys.exit(2)
     result = quality_report(db_path)
     result["profile"] = Path(db_path).parent.name
+    if principals_path:
+        principals = _load_principals(principals_path)
+        other = [u for u in result["users"] if u["user_id"] not in principals]
+        result["user_scoping"] = {
+            "non_principal_ids": [u["user_id"] for u in other],
+            "non_principal_facts": sum(u["facts"] for u in other),
+            "definition": "user_id values absent from the --principals manifest (canonical keys + platform_ids)",
+        }
     backup_dir = getattr(args, "backup_dir", None)
     if backup_dir:
         result["backup"] = backup_store(db_path, backup_dir, result["profile"])
@@ -617,6 +651,7 @@ def register_cli(subparser) -> None:
     # quality — store-quality sprint: read-only metrics + optional VACUUM INTO backup
     p_quality = subs.add_parser("quality", help="Store-quality metrics (read-only) + optional VACUUM INTO backup")
     p_quality.add_argument("--db", help="Store path override (default: <hermes-home>/limbic.db)")
+    p_quality.add_argument("--principals", help="users.yaml manifest path: classifies user_id scoping (canonical keys + platform_ids are principal)")
     p_quality.add_argument("--backup-dir", help="Timestamped VACUUM INTO backup of the store into this directory")
     p_quality.add_argument("-o", "--output", help="Write the report JSON to a file")
     p_quality.set_defaults(func=cmd_quality)
