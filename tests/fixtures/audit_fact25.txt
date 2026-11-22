@@ -1,0 +1,20 @@
+let revisit the character development pipeline for storyboards....
+
+Character-consistent storyboard pipeline (verified live on fal 2026-09-30):
+
+1. SOURCE: fal-ai/flux-2-pro — one clean character "mugshot" (neutral pose, plain
+   background, even lighting). Fixed-facts spec stated ONCE here; record the seed.
+2. REFERENCE SET: 2-4 angle variants of the source via fal-ai/nano-banana/edit
+   ("same character, three-quarter view") — output URLs host themselves on fal CDN.
+3. PANELS: fal-ai/ideogram/character — reference_image_urls (1-4) is REQUIRED.
+   Same refs on EVERY call, only the prompt changes.
+   RULE: prompt = scene only (location/action/camera/weather). Refs = person.
+   Never re-describe the face in the prompt — that reintroduces drift.
+   $0.10 TURBO / $0.15 BALANCED / $0.20 QUALITY per panel, ~26s, aspect 16:9.
+4. FIXES: fal-ai/ideogram/character/edit — panel + mask + same refs; identity
+   preserved, one element swapped (revision loop without rerolling).
+5. MOTION (optional): minimax/h3-max/reference-to-video, 4 square refs, $0.08/s.
+
+Cost: ~$2.50 per 20-panel sequence; ref set built once per character.
+Boundary: Ideogram locks the person, not the style — consistent grade = prompt
+("shot on 35mm, muted teal grade" in every call).
