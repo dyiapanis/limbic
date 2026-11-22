@@ -179,19 +179,19 @@ def test_backup_store_roundtrip(tmp_path):
 
 def test_cli_quality_end_to_end(tmp_path, capsys, monkeypatch):
     cli = _load_cli()
-    home = tmp_path / "herb"
+    home = tmp_path / "beta"
     (home / "logs").mkdir(parents=True)
     db = _store(home)
-    out = tmp_path / "herb.json"
+    out = tmp_path / "beta.json"
     cli.main(["--hermes-home", str(home), "quality",
               "--backup-dir", str(tmp_path / "bk"), "-o", str(out)])
     parsed = json.loads(out.read_text())
-    assert parsed["profile"] == "herb" and parsed["facts_total"] == 5
-    assert parsed["backup"]["path"].startswith(str(tmp_path / "bk") + "/herb-limbic-")
+    assert parsed["profile"] == "beta" and parsed["facts_total"] == 5
+    assert parsed["backup"]["path"].startswith(str(tmp_path / "bk") + "/beta-limbic-")
     # store path is derived from --hermes-home when --db is absent
     assert parsed["store"] == str(db)
     captured = capsys.readouterr().out
-    assert "herb.json" in captured
+    assert "beta.json" in captured
     # missing store exits 1
     missing = tmp_path / "empty-home"
     missing.mkdir()
