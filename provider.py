@@ -366,6 +366,7 @@ class LimbicMemoryProvider(MemoryProvider):
         if uid is None:
             return {"error": "No user_id resolved"}
 
+        manifest_ok = False
         # L3 (plan 2026-10-24): unresolved/garbage ids must not become memory
         # buckets (audit: 4 facts stored under user_id='6'). A manifest-known
         # canonical or a well-formed MXID passes; anything else resolves to
@@ -374,6 +375,8 @@ class LimbicMemoryProvider(MemoryProvider):
             manifest = getattr(self, "_manifest", None)
             if manifest is not None:
                 known = {c.lower() for c in manifest.canonical_names}
+                if uid.lower() in known:
+                    manifest_ok = True
                 if uid.lower() not in known:
                     # Resolve the raw platform id against the manifest first:
                     # _current_user_id can itself be the unresolved raw id, and
@@ -391,9 +394,13 @@ class LimbicMemoryProvider(MemoryProvider):
         # unreachable storage. L3 above re-attributes manifest-resolvable ids
         # (e.g. a since-registered platform id); a room-shaped id that
         # survives that correction is refused instead of minted — the exact
-        # shape of the 2026-11-04/05 mattermost-id orphan facts.
+        # shape of the 2026-11-04/05 mattermost-id orphan facts. A manifest-
+        # resolved canonical skips the shape check: the manifest is the
+        # stronger claim (a single-word 19+ char username is a person, and the
+        # review round's constantinamargaret probe would otherwise lose
+        # memories silently).
         from .store_sqlite import room_shaped_user_id
-        if room_shaped_user_id(uid):
+        if room_shaped_user_id(uid) and not manifest_ok:
             logger.warning(
                 "limbic: rejected room-scoped user_id %r — wrong-principal scope", uid)
             return {"status": "rejected_room_scoped",
@@ -472,7 +479,7 @@ class LimbicMemoryProvider(MemoryProvider):
         # Atomic soft-split (sprint C5): long content with DETECTED structure
         # (sections/lists/paragraphs) embeds better as child facts. Single
         # narratives fall through to the whole-fact path unchanged.
-        split_result = self._plan_soft_split(content, uid)
+        split_result = self._plan_soft_split(content, uid, manifest_ok=manifest_ok)
         if split_result is not None:
             return split_result
 
@@ -513,6 +520,7 @@ class LimbicMemoryProvider(MemoryProvider):
                 "retrieval_count": 0,
                 "created_at": _now_iso(),
             },
+            principal_vouched=manifest_ok,
         )
 
         logger.debug("limbic: stored fact_id=%d user=%s trust=%.2f surprise=%.2f",
@@ -677,7 +685,8 @@ class LimbicMemoryProvider(MemoryProvider):
         return {"decision": "store", "dedup_fact_id": None,
                 "contradicted_ids": contradicted_ids}
 
-    def _plan_soft_split(self, content: str, uid: str) -> dict | None:
+    def _plan_soft_split(self, content: str, uid: str,
+                         manifest_ok: bool = False) -> dict | None:
         """Atomic soft-split path (sprint C5); None falls through to the
         whole-fact write.
 
@@ -729,7 +738,8 @@ class LimbicMemoryProvider(MemoryProvider):
             # minting a parent row for nothing.
             return {"status": "deduplicated", "deduplicated_parts": len(frags)}
 
-        stored = self._storage.store_split(content, uid, children)
+        stored = self._storage.store_split(content, uid, children,
+                                           principal_vouched=manifest_ok)
         logger.debug("limbic: stored split parent=%d children=%d user=%s",
                      stored["parent_fact_id"], len(stored["child_fact_ids"]), uid)
 
@@ -1466,9 +1476,13 @@ class LimbicMemoryProvider(MemoryProvider):
                     continue
 
                 # Contradiction persists and the penalty has been outvoted —
-                # re-assert it. Bounded: one trust write per link.
+                # re-assert it. Bounded: one trust write per link. The floor
+                # applies here too: a persistent contradiction may pin a fact
+                # at the floor but never dock it below (same clamp as the
+                # write-path dock).
                 penalty = self._trust.correction_penalty_value()
-                new_trust = max(0.0, older_trust - penalty)
+                floor = self._trust.correction_floor_value()
+                new_trust = max(min(older_trust, floor), older_trust - penalty)
                 self._storage.update(older_id, trust_score=new_trust)
                 self._check_organic_atrophy(
                     older_id, new_trust,
