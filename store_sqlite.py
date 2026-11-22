@@ -1199,6 +1199,66 @@ class SQLiteStorage(LimbicStorage):
                 )
         return self._write_txn(_txn)
 
+    def gc_entities(self, junk_match=None, apply: bool = False) -> dict:
+        """Entity-graph hygiene sweep, one pass.
+
+        Classes, all measured in the live transaction (never a cached audit
+        snapshot):
+          junk_entities   — entity rows whose (name, type) matches the NER
+                            junk filter; their mention rows cascade with them
+          orphan_mentions — mention rows whose fact_id is gone (legacy rows
+                            predating the foreign_keys pragma)
+          orphan_entities — entity rows with zero mentions (the quality
+                            report's orphan-entity SQL, verbatim)
+
+        apply=False measures the classes without deleting; apply=True deletes
+        and re-verifies. Counts reflect what THIS call saw — assert them
+        against an independently measured store state before trusting the sweep.
+        """
+        ORPHAN_ENTITIES_SQL = (
+            "SELECT COUNT(*) FROM entities "
+            "WHERE entity_id NOT IN (SELECT DISTINCT entity_id FROM mentions)"
+        )
+        ORPHAN_MENTIONS_SQL = (
+            "SELECT COUNT(*) FROM mentions "
+            "WHERE fact_id NOT IN (SELECT fact_id FROM facts)"
+        )
+
+        def _txn():
+            counts: dict = {}
+            junk_ids: list[str] = []
+            if junk_match is not None:
+                for row in self._db.execute(
+                        "SELECT entity_id, name, type FROM entities").fetchall():
+                    if junk_match(row["name"], row["type"] or "UNKNOWN"):
+                        junk_ids.append(row["entity_id"])
+            counts["junk_entities"] = len(junk_ids)
+            counts["orphan_entities"] = self._db.execute(ORPHAN_ENTITIES_SQL).fetchone()[0]
+            counts["orphan_mentions"] = self._db.execute(ORPHAN_MENTIONS_SQL).fetchone()[0]
+            if not apply:
+                return counts
+
+            if junk_ids:
+                ph = ",".join("?" * len(junk_ids))
+                cur = self._db.execute(
+                    f"DELETE FROM mentions WHERE entity_id IN ({ph})", junk_ids)
+                counts["junk_mentions_deleted"] = max(cur.rowcount, 0)
+                self._db.executemany(
+                    "DELETE FROM entities WHERE entity_id = ?",
+                    [(i,) for i in junk_ids])
+            cur = self._db.execute(
+                "DELETE FROM mentions WHERE fact_id NOT IN (SELECT fact_id FROM facts)")
+            counts["orphan_mentions_deleted"] = max(cur.rowcount, 0)
+            cur = self._db.execute(
+                "DELETE FROM entities WHERE entity_id NOT IN "
+                "(SELECT DISTINCT entity_id FROM mentions)")
+            counts["orphan_entities_deleted"] = max(cur.rowcount, 0)
+            # Post-sweep verification against the live store.
+            counts["remaining_orphan_entities"] = self._db.execute(ORPHAN_ENTITIES_SQL).fetchone()[0]
+            return counts
+
+        return self._write_txn(_txn)
+
     def search_graph(self, entity_names: list[str], filters: dict, limit: int) -> list[dict]:
         with self._lock:
             import hashlib
