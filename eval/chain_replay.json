@@ -1,0 +1,80 @@
+{
+ "kind": "chain-replay fixture",
+ "generated": "2026-11-22",
+ "provenance": "fleet memory-store copies 2026-11-22 (C1 baseline backups); profiles anonymized and content stripped in this generator per the public-repo fixture scrub rule. fact ids are opaque; day 0 = first hit on twin A.",
+ "selection": {
+  "mechanism": "correction_floor",
+  "penalty": 0.15,
+  "floor": 0.3,
+  "resolution": "landed when trust <= correction_floor (tick recheck)"
+ },
+ "chains": [
+  {
+   "label": "victim_twin_A",
+   "retrieval_count": 3,
+   "actual_final_trust": 0.0226,
+   "hits": [
+    {
+     "day": 0.02,
+     "newer": "twin_B"
+    },
+    {
+     "day": 0.03,
+     "newer": "superseder_1"
+    },
+    {
+     "day": 12.8,
+     "newer": "superseder_2"
+    }
+   ],
+   "fleet_fact_id": 87
+  },
+  {
+   "label": "victim_twin_B",
+   "retrieval_count": 8,
+   "actual_final_trust": 0.0192,
+   "hits": [
+    {
+     "day": 0.03,
+     "newer": "superseder_1"
+    },
+    {
+     "day": 12.8,
+     "newer": "superseder_2"
+    }
+   ],
+   "fleet_fact_id": 88
+  },
+  {
+   "label": "victim_superseder_1",
+   "retrieval_count": 12,
+   "actual_final_trust": 0.2381,
+   "hits": [
+    {
+     "day": 12.8,
+     "newer": "superseder_2"
+    }
+   ],
+   "fleet_fact_id": 89
+  },
+  {
+   "label": "victim_superseder_2",
+   "retrieval_count": 0,
+   "actual_final_trust": 0.0741,
+   "hits": [
+    {
+     "day": 12.85,
+     "newer": "superseder_3"
+    }
+   ],
+   "fleet_fact_id": 94
+  },
+  {
+   "label": "victim_superseder_3",
+   "retrieval_count": 3,
+   "actual_final_trust": 0.1851,
+   "hits": [],
+   "fleet_fact_id": 95
+  }
+ ]
+}
