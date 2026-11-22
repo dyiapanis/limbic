@@ -382,6 +382,19 @@ class LimbicMemoryProvider(MemoryProvider):
                             uid, fallback)
                         uid = fallback
 
+        # User-scope boundary (sprint C8): a room-shaped uid can never own a
+        # fact — recall resolves principals, so a room/platform-id scope is
+        # unreachable storage. L3 above re-attributes manifest-resolvable ids
+        # (e.g. a since-registered platform id); a room-shaped id that
+        # survives that correction is refused instead of minted — the exact
+        # shape of the 2026-11-04/05 mattermost-id orphan facts.
+        from .store_sqlite import room_shaped_user_id
+        if room_shaped_user_id(uid):
+            logger.warning(
+                "limbic: rejected room-scoped user_id %r — wrong-principal scope", uid)
+            return {"status": "rejected_room_scoped",
+                    "reason": "user_id names a room/platform id, not a principal"}
+
         # Reject ephemeral date facts — they go stale and cause confusion
         if self._is_ephemeral_date_fact(content):
             logger.info("limbic: rejected ephemeral date fact (fact_id none, len=%d)", len(content))
