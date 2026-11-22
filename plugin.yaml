@@ -1,5 +1,5 @@
 name: limbic
-version: 0.9.5
+version: 0.9.6
 description: "Self-organising memory system. Opaque, adaptive, self-contained. Modelled on the biological limbic system."
 author: "D Yiapanis"
 kind: exclusive
@@ -37,4 +37,4 @@ notes: |
   Embedder-stamp update mechanism: each store records the identity of the
   embedder that produced its vectors; a plugin update that changes the
   embedder marks the store stale until `hermes limbic reindex` re-embeds it.
-  CLI commands available via `hermes limbic <cmd>` (stats, export, forget, forget-fact, seed, reindex, fts-rebuild, languages, status).
+  CLI commands available via `hermes limbic <cmd>` (stats, quality, export, forget, forget-fact, seed, reindex, fts-rebuild, languages, status, entities [with --gc/--apply], entities-backfill).

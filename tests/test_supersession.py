@@ -47,6 +47,9 @@ class _FakeTrust:
     def correction_penalty_value(self, *a, **k):
         return 0.15
 
+    def correction_floor_value(self, *a, **k):
+        return 0.30
+
     def interference_penalty_value(self, *a, **k):
         return 0.20
 
@@ -178,7 +181,7 @@ class _WriteStorage:
     def get_all_embeddings(self, user_id):
         return []
 
-    def store(self, content, user_id, embedding, metadata):
+    def store(self, content, user_id, embedding, metadata, principal_vouched=False):
         fid = self.next_id
         self.next_id += 1
         self.stored.append((fid, content))

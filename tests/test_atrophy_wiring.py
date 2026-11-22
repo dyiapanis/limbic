@@ -77,22 +77,27 @@ def test_below_threshold_is_a_candidate(engine: TrustEngine):
 
 def test_restored_values_clear_the_threshold(engine: TrustEngine):
     """Regression guard for the restore: the observed victim values, before and
-    after. If a future decay change re-collapses them, this fails."""
+    after. If a future decay change re-collapses them, this fails.
+
+    C4 recalibration moved the operating point 0.01 → 0.05: the
+    band trusts (0.010–0.035) that sat harmlessly above the old gate are NOW
+    candidates by design (the measured zombie band is actionable), while
+    healthy trusts stay safe.
+    """
     threshold = engine.atrophy_threshold()
     created = "2026-09-08T00:00:00+00:00"
 
-    # Below the threshold: these WOULD have been swept. Only the lowest had
-    # actually crossed the line; the rest sat a hair above it.
-    swept = [0.009762, 0.005, 0.001]
-    # At or above threshold: never candidates, before or after the restore.
-    # 0.010155 etc. were corrupted but had not yet crossed — the restore moved
-    # them to ~0.46, but even their corrupted values were safe from this gate.
-    safe = [0.010155, 0.010258, 0.013667, 0.035897, 0.4559, 0.4665, 0.4774, 0.1097]
+    # Pre-recalibration "safe" band values are NOW intentional sweep
+    # candidates (documented in C4: the mark→grace→reap guard decides who
+    # goes; these were the audit's zombie-band population).
+    atrophy_band = [0.010155, 0.010258, 0.013667, 0.035897, 0.045, 0.0499]
+    # Healthy trusts: never candidates, before or after the restore.
+    safe = [0.05, 0.051, 0.1097, 0.4559, 0.4665, 0.4774]
 
-    for v in swept:
+    for v in atrophy_band:
         assert engine.is_atrophy_candidate(
             trust_score=v, last_retrieved=None, created_at=created
-        ), f"{v} is below {threshold} and must be flagged"
+        ), f"{v} is below the recalibrated {threshold} and must be flagged"
 
     for v in safe:
         assert not engine.is_atrophy_candidate(

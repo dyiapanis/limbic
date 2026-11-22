@@ -1,6 +1,6 @@
 # Limbic — Opaque Memory System Specification
 
-**Version 0.9.5** · Author: D Yiapanis · License: MIT
+**Version 0.9.6** · Author: D Yiapanis · License: MIT
 
 ## Overview
 
@@ -60,7 +60,7 @@ The authoritative mapping — region → process → code symbol — is `limbic/
 - **NLI-aware interference and correction detection** — for each similar existing fact (similarity > 0.60), an NLI cross-encoder classifies the relationship as contradiction, entailment, or neutral. The label determines the action (see NLI-aware flow below).
 - Bayesian surprise computed — novel facts get trust boost
 - Stored in SQLite with embedding, content, user_id, trust, activation, timestamps
-- **Named entities extracted via spaCy NER** — EntityRuler with custom fleet patterns (user names, project names, products) layered on top of statistical NER. Entities stored in `entities` table, fact↔entity links in `mentions` junction table. This is the hippocampal spatial map — each fact is located relative to the entities it mentions.
+- **Named entities extracted via spaCy NER** — EntityRuler with custom fleet patterns (user names, project names, products) layered on top of statistical NER. Entities stored in `entities` table, fact↔entity links in `mentions` junction table. This is the hippocampal spatial map — each fact is located relative to the entities it mentions. Junk classes are filtered at extraction and never stored: single-char tokens, pure number/price tokens, number-word/function-word tokens, and the number/quantity NE labels (CARDINAL, ORDINAL, MONEY, PERCENT, QUANTITY) — extensible per deployment via `entity_junk_words`.
 - Initial trust: 0.5 (or 0.6 if high surprise)
 - Initial activation: 0.03 (silent engram)
 
@@ -87,7 +87,7 @@ For each similar existing fact, the NLI cross-encoder (MiniLMv2-L6-mnli-xnli, 10
 
 **This runs at write time**, so it works in all session types — not just continuous gateway sessions. This closes the correction propagation gap that existed when correction detection was regex-only and read-time.
 
-**Why NLI, not embeddings or regex:** Embeddings capture topic, not stance — "I eat meat" and "I am vegan" have high cosine similarity because both are about diet. Regex catches explicit negation ("no", "wrong") but misses declarative state-changes ("The old engine is decommissioned", "The browser engine is Camofox now"). NLI (cross-encoder) processes both texts together and captures their interaction — it detects semantic contradiction regardless of linguistic form.
+**Why NLI, not embeddings or regex:** Embeddings capture topic, not stance — "I eat meat" and "I am vegan" have high cosine similarity because both are about diet. Regex catches explicit negation ("no", "wrong") but misses declarative state-changes ("The old engine is decommissioned", "The browser engine is rewritten now"). NLI (cross-encoder) processes both texts together and captures their interaction — it detects semantic contradiction regardless of linguistic form.
 
 The agent never sees fact IDs, payloads, or internal state. It said "remember this" and the system did.
 
@@ -237,19 +237,19 @@ Based on Nader et al. (2000) reconsolidation research — reinterpreted through 
 Unlike the virtual forgetting already implemented (temporal decay, interference, reconsolidation), atrophy **physically removes** facts from the database. But it does so organically:
 
 **Mark phase:** During `prefetch()`, after applying temporal decay to every retrieved fact, any fact meeting these criteria is marked:
-- `trust_score < atrophy_threshold` (default 0.01 — trust-only, near zero)
+- `trust_score < atrophy_threshold` (default 0.05 since the 2026-11-22 recalibration — trust-only; the fact's own residual trust decides)
 
-The horizon check (`atrophy_horizon_multiplier × decay_half_life_days`) is disabled by default (multiplier = 0). Trust alone determines atrophy — a fact's lifetime through the 30-day decay curve IS its grace period. If trust has decayed to near-zero, the fact has had its entire lifetime to prove relevant and didn't.
+The horizon check (`atrophy_horizon_multiplier × decay_half_life_days`) is disabled by default (multiplier = 0). Trust alone determines atrophy — a fact's lifetime through the 30-day decay curve was its original grace period (the 2026-11-22 recalibration added an explicit 7-day review window instead; see below).
 
 For never-retrieved facts (orphans), `created_at` is used as the reference timestamp for decay, ensuring orphans still decay through time alone.
 
 Marking sets `atrophy_marked_at = now()` on the record.
 
-**Sweep phase:** During `tick()` (every turn), `_sweep_atrophy()` checks for facts whose `atrophy_marked_at` exceeds `atrophy_grace_days` (default 0 — no separate grace; the fact's lifetime through the decay curve is the grace period). It deletes them in bounded batches (`max_atrophy_per_turn` = 10).
+**Sweep phase:** During `tick()` (every turn), `_sweep_atrophy()` checks for facts whose `atrophy_marked_at` exceeds `atrophy_grace_days` (default 7 since the 2026-11-22 recalibration — a review window between mark and reap). It deletes them in bounded batches (`max_atrophy_per_turn` = 10).
 
 A background scan (`_scan_and_sweep_gated_facts()`) also runs every turn, querying the DB directly for facts below the atrophy threshold that haven't surfaced in search results. This catches facts that are too irrelevant to even appear in prefetch candidates.
 
-**Why no separate grace period:** The fact's lifetime — from creation, through the 30-day Ebbinghaus decay curve, until trust drops below the atrophy threshold — IS the grace period. It's not a parameter. Setting `atrophy_grace_days = 0` is correct — there's no need for an additional wait after the fact has already had its entire lifetime to prove itself.
+**Grace is a review window:** the fact's lifetime — from creation, through the 30-day Ebbinghaus decay curve, until trust drops below the atrophy threshold — was the original grace period; the 2026-11-22 recalibration (C4) ships `atrophy_grace_days = 7` so marked facts get a bounded review window before reap, and the in-store reap guard (open contradiction links, `retrieval_count >= 5`, operator exclusions) keeps a blessed fact in the store even when marked. Each sweep re-decides; unmarking resets the grace window.
 
 **All parameters are adaptive:**
 - `atrophy_threshold` — if too many facts are marked, the threshold rises; if the store grows unbounded, it lowers
@@ -397,6 +397,7 @@ forget(user_id: str) → {"removed": N, "status": "complete"}
 export(user_id: str) → {"facts": [...], "fact_count": N}
 seed(user_id: str, content: str) → {"status": "stored"}
 reindex(provider: str, **config) → {"reindexed": N, "status": "complete"}
+gc_entities(apply: bool) → {"junk_entities": N, "orphan_entities": N, "orphan_mentions": N, ...}
 stats(user_id: str | None) → {"total_facts": N, "avg_trust": F, "matured": N, ...}
 ```
 
@@ -406,6 +407,12 @@ stats(user_id: str | None) → {"total_facts": N, "avg_trust": F, "matured": N, 
 - `seed` — inject facts without conversation. For migration or operator-initiated context loading.
 - `reindex` — re-embed all facts with the bundled model (optionally at new dims). Creates a new `vec_index`, re-embeds, swaps atomically, drops the old index. The FTS and fact rows are untouched.
 - `stats` — analytical self-evaluation. Per-user or aggregate metrics for performance monitoring.
+- `gc_entities` — entity-graph hygiene (`hermes limbic entities [--gc] [--apply]`).
+  Sweeps the junk classes that predate the extraction filter (number/price
+  tokens, number-words, function words) plus orphaned mention/entity rows;
+  junk entities cascade their mention rows. Counts are measured live in the
+  sweep transaction; default is a read-only report, `--gc` previews, `--gc
+  --apply` deletes.
 
 ### Config (environmental conditions)
 
@@ -427,11 +434,13 @@ nli:
 # Entity extraction — spaCy models per language
 nlp:
   languages: [en]
+entity_junk_words: []        # extra tokens the entity filter rejects (extends the defaults)
 
 # Environmental conditions — system adapts within these bounds
 context_budget: 20           # like pot size — ceiling on facts in awareness per turn
 fragment_gate_chars: 60      # conversational fragments are not durable facts
 fragment_gate_words: 3
+fragment_gate_flat_chars: 40 # sub-threshold utterances — durable markers escape
 
 # Adaptive parameters (decay half-life, relevance floor) live in
 # limbic_params.json — managed by the trust engine, not static knobs.
@@ -441,6 +450,53 @@ If recall is poor, you change the environment:
 - Too much noise? Reduce `context_budget` (smaller pot)
 - Facts fading too fast? The decay half-life is adaptive — feed the system steady retrieval traffic on the facts that matter
 - System not learning? Feed it more experiences (more water)
+
+### Shipped guardrails — 2026-11-22 fleet-memory sprint (acceptance stanza)
+
+The sprint's reviewed per-card set — C1 quality instrument, C2 correction dock,
+C3 store heal, C4 atrophy recalibration, C5 atomic soft-split (sibling-exempt
+NLI write path), C6 anti-fact fragment gate, C7 entity hygiene, C8 user-scope
+guard, C9 recall re-measure — ships the operating behavior below. Each line
+pairs the mechanism with its review-accepted state; this stanza is the
+deploy-acceptance record for the sprint composition (`455e631..dev`).
+
+- **Split containers are ordinary facts (C5).** Split parent rows decay and
+  fade like any other fact — the stored children carry the content, and
+  `stats`/`export` still count the parent row once for that user (by design;
+  the `split_parent_id` / `split_role='parent'` columns identify containers
+  — `parent_fact_id` in tool output is the same field in API form).
+
+- **User-scope boundary guard (C8).** Room-shaped user_ids — Matrix `!` room
+  ids and long opaque alphanumeric platform ids (`room_shaped_user_id()`) —
+  can never own a fact: rejected at every write path (`remember`, `store`,
+  `store_split`) with `status: rejected_room_scoped`. A manifest-resolved
+  canonical principal skips the shape check (a single-word 19+ char
+  username is a person, not a room).
+- **Bounded correction dock (C2).** `correction_floor: 0.30` (adaptive param,
+  range 0.10–0.50) clamps a detected correction at three docks — the write path
+  (`min(old_trust, floor)`: the dock bounds damage at the floor and never
+  raises the docked fact), the read-path regex dock, and the tick re-dock —
+  with the floor sitting above `relevance_floor` 0.25 so a corrigendum still
+  surfaces.
+- **Atrophy recalibration (C4).** Operating point `atrophy_threshold: 0.05`,
+  `atrophy_grace_days: 7` (review window between mark and reap; each sweep
+  re-decides, unmarking resets grace), batch cap 10/turn unchanged, and an
+  in-store reap guard: open contradiction links, `retrieval_count >= 5`, and
+  operator exclusions (`reap_guard_excludes`) are never reaped even when
+  marked.
+- **Entity hygiene (C7).** Junk classes filtered at extraction — never stored
+  (single-char tokens, pure number/price tokens, number-word/function-word
+  tokens, CARDINAL/ORDINAL/MONEY/PERCENT/QUANTITY NE labels; extensible via
+  `entity_junk_words`) — plus the `gc_entities` operator verb
+  (`hermes limbic entities [--gc] [--apply]`, read-only report by default)
+  with independently SQL-re-measured counts in `tests/test_entities_gc.py`.
+- **Recall confidence floor 0.50 holds (C6/C9).** Re-measured on the
+  post-split composition (recall_eval: raw recall@5 0.8222, hit@1 0.80, gated
+  0.7368, 15/30 abstain, deterministic ×2; decoy_eval: 12/12 abstain, 0/12
+  false-surface). The floor-blind margin probe (`eval/gap_band_probe.py`)
+  records the empty margin at 0.333–0.4595: the widest absent-topic lookalike
+  still clears 0.50 by 0.0405 — the floor sits mid-gap; "better silent than
+  false" stands.
 
 ---
 
@@ -1080,7 +1136,7 @@ Concurrent sessions: session-keyed user_id cache with threading.Lock.
 ```yaml
 # plugin.yaml
 name: limbic
-version: 0.9.5
+version: 0.9.6
 description: "Self-organising memory system. Opaque, adaptive, self-contained. Modelled on the biological limbic system."
 author: "D Yiapanis"
 kind: exclusive
