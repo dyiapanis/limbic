@@ -27,6 +27,12 @@ nlp:
 
 context_budget: 20
 
+# C4 reap guard: fact ids the atrophy sweep never reaps, even when marked and
+# past grace (chain-collateral facts blessed for retention by review — C2/C3
+# replay). Merge this with the atrophy guards: open
+# contradiction links and retrieval_count >= 5 are always checked in-store.
+reap_guard_excludes: []
+
 # NOTE: decay half-life and relevance_floor are ADAPTIVE (limbic_params.json,
 # managed by the trust engine). There is no static yaml knob for them.
 # Fragment gate (2026-09-07): remember() rejects content shorter than BOTH
