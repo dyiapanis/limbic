@@ -21,10 +21,23 @@ logging.disable(logging.CRITICAL)
 
 
 class StubEmbedder:
-    """Deterministic: same text -> same vector, so similarity is predictable."""
+    """Deterministic: same text -> same vector, so similarity is predictable.
+
+    sha1-derived, NOT hash(): str hash() is salt-seeded per process — when a
+    string hashed to 0 mod 100 the stub returned an all-zero vector, every
+    cosine became 0/0 (NaN), the NLI gate never fired, and the suite
+    inherited a ~2% flake per seeded string (seen on the 0.9.6 windows CI
+    run). The +0.01 floor keeps vectors non-degenerate."""
 
     def embed(self, text):
-        return [abs(hash(text)) % 100 / 100.0] * DIMS
+        import hashlib
+
+        # Single constant replicated across dims: all vectors are collinear
+        # (pairwise cosine exactly 1.0 — what these tests were designed
+        # around), but the constant is sha1-derived and floored above zero,
+        # so no process seed can produce a zero vector (the 0/0 NaN flake).
+        c = (hashlib.sha1(text.encode()).digest()[0] % 100) / 100.0 + 0.01
+        return [c] * DIMS
 
 
 class StubNLI:
