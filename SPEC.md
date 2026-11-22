@@ -237,19 +237,19 @@ Based on Nader et al. (2000) reconsolidation research — reinterpreted through 
 Unlike the virtual forgetting already implemented (temporal decay, interference, reconsolidation), atrophy **physically removes** facts from the database. But it does so organically:
 
 **Mark phase:** During `prefetch()`, after applying temporal decay to every retrieved fact, any fact meeting these criteria is marked:
-- `trust_score < atrophy_threshold` (default 0.01 — trust-only, near zero)
+- `trust_score < atrophy_threshold` (default 0.05 since the 2026-11-22 recalibration — trust-only; the fact's own residual trust decides)
 
-The horizon check (`atrophy_horizon_multiplier × decay_half_life_days`) is disabled by default (multiplier = 0). Trust alone determines atrophy — a fact's lifetime through the 30-day decay curve IS its grace period. If trust has decayed to near-zero, the fact has had its entire lifetime to prove relevant and didn't.
+The horizon check (`atrophy_horizon_multiplier × decay_half_life_days`) is disabled by default (multiplier = 0). Trust alone determines atrophy — a fact's lifetime through the 30-day decay curve was its original grace period (the 2026-11-22 recalibration added an explicit 7-day review window instead; see below).
 
 For never-retrieved facts (orphans), `created_at` is used as the reference timestamp for decay, ensuring orphans still decay through time alone.
 
 Marking sets `atrophy_marked_at = now()` on the record.
 
-**Sweep phase:** During `tick()` (every turn), `_sweep_atrophy()` checks for facts whose `atrophy_marked_at` exceeds `atrophy_grace_days` (default 0 — no separate grace; the fact's lifetime through the decay curve is the grace period). It deletes them in bounded batches (`max_atrophy_per_turn` = 10).
+**Sweep phase:** During `tick()` (every turn), `_sweep_atrophy()` checks for facts whose `atrophy_marked_at` exceeds `atrophy_grace_days` (default 7 since the 2026-11-22 recalibration — a review window between mark and reap). It deletes them in bounded batches (`max_atrophy_per_turn` = 10).
 
 A background scan (`_scan_and_sweep_gated_facts()`) also runs every turn, querying the DB directly for facts below the atrophy threshold that haven't surfaced in search results. This catches facts that are too irrelevant to even appear in prefetch candidates.
 
-**Why no separate grace period:** The fact's lifetime — from creation, through the 30-day Ebbinghaus decay curve, until trust drops below the atrophy threshold — IS the grace period. It's not a parameter. Setting `atrophy_grace_days = 0` is correct — there's no need for an additional wait after the fact has already had its entire lifetime to prove itself.
+**Grace is a review window:** the fact's lifetime — from creation, through the 30-day Ebbinghaus decay curve, until trust drops below the atrophy threshold — was the original grace period; the 2026-11-22 recalibration (C4) ships `atrophy_grace_days = 7` so marked facts get a bounded review window before reap, and the in-store reap guard (open contradiction links, `retrieval_count >= 5`, operator exclusions) keeps a blessed fact in the store even when marked. Each sweep re-decides; unmarking resets the grace window.
 
 **All parameters are adaptive:**
 - `atrophy_threshold` — if too many facts are marked, the threshold rises; if the store grows unbounded, it lowers
@@ -450,6 +450,45 @@ If recall is poor, you change the environment:
 - Too much noise? Reduce `context_budget` (smaller pot)
 - Facts fading too fast? The decay half-life is adaptive — feed the system steady retrieval traffic on the facts that matter
 - System not learning? Feed it more experiences (more water)
+
+### Shipped guardrails — 2026-11-22 fleet-memory sprint (acceptance stanza)
+
+The sprint's reviewed per-card set — C1 quality instrument, C2 correction dock,
+C3 store heal, C4 atrophy recalibration, C5 atomic soft-split (sibling-exempt
+NLI write path), C6 anti-fact fragment gate, C7 entity hygiene, C8 user-scope
+guard, C9 recall re-measure — ships the operating behavior below. Each line
+pairs the mechanism with its review-accepted state; this stanza is the
+deploy-acceptance record for the sprint composition (`455e631..dev`).
+
+- **User-scope boundary guard (C8).** Room-shaped user_ids — Matrix `!` room
+  ids and long opaque alphanumeric platform ids (`room_shaped_user_id()`) —
+  can never own a fact: rejected at every write path (`remember`, `store`,
+  `store_split`) with `status: rejected_room_scoped`.
+- **Bounded correction dock (C2).** `correction_floor: 0.30` (adaptive param,
+  range 0.10–0.50) clamps a detected correction at three docks — the write path
+  (`min(old_trust, floor)`: the dock bounds damage at the floor and never
+  raises the docked fact), the read-path regex dock, and the tick re-dock —
+  with the floor sitting above `relevance_floor` 0.25 so a corrigendum still
+  surfaces.
+- **Atrophy recalibration (C4).** Operating point `atrophy_threshold: 0.05`,
+  `atrophy_grace_days: 7` (review window between mark and reap; each sweep
+  re-decides, unmarking resets grace), batch cap 10/turn unchanged, and an
+  in-store reap guard: open contradiction links, `retrieval_count >= 5`, and
+  operator exclusions (`reap_guard_excludes`) are never reaped even when
+  marked.
+- **Entity hygiene (C7).** Junk classes filtered at extraction — never stored
+  (single-char tokens, pure number/price tokens, number-word/function-word
+  tokens, CARDINAL/ORDINAL/MONEY/PERCENT/QUANTITY NE labels; extensible via
+  `entity_junk_words`) — plus the `gc_entities` operator verb
+  (`hermes limbic entities [--gc] [--apply]`, read-only report by default)
+  with independently SQL-re-measured counts in `tests/test_entities_gc.py`.
+- **Recall confidence floor 0.50 holds (C6/C9).** Re-measured on the
+  post-split composition (recall_eval: raw recall@5 0.8222, hit@1 0.80, gated
+  0.7368, 15/30 abstain, deterministic ×2; decoy_eval: 12/12 abstain, 0/12
+  false-surface). The floor-blind margin probe (`eval/gap_band_probe.py`)
+  records the empty margin at 0.333–0.4595: the widest absent-topic lookalike
+  still clears 0.50 by 0.0405 — the floor sits mid-gap; "better silent than
+  false" stands.
 
 ---
 
