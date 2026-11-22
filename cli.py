@@ -303,6 +303,8 @@ def cmd_entities(args):
     storage = SQLiteStorage(db_path)
     try:
         sweep = bool(getattr(args, "gc", False))
+        if getattr(args, "apply", False) and not sweep:
+            print("NOTE: --apply without --gc does nothing — the report ran read-only.")
         result = storage.gc_entities(
             junk_match=junk_matcher(extras),
             apply=bool(sweep and getattr(args, "apply", False)),
