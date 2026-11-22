@@ -22,6 +22,7 @@ except ImportError:  # pragma: no cover
 import json
 import logging
 import os
+import re
 import sqlite3
 import struct
 import threading
@@ -123,6 +124,24 @@ _UPDATABLE_COLUMNS = frozenset({
     "last_retrieved", "matured_at", "atrophy_marked_at", "created_at",
     "updated_at",
 })
+
+
+# User-scope boundary (sprint C8): ids that already name a room or an opaque
+# platform id, never a principal — Matrix internal room ids ("!x:y") and any
+# pure-alphanumeric id ≥18 chars (room-id length convention; Mattermost user
+# ids run 26). As facts.user_id they are wrong-principal scope: recall
+# resolves principals, so the facts are unreachable storage. Principal keys
+# and MXIDs ("@…") are shorter or @"-prefixed, so they never trip this —
+# including "general", "6", "uid:1000" (other malformed classes, handled by
+# manifest re-attribution, not this net).
+_ROOM_USER_ID_RE = re.compile(r"[A-Za-z0-9]{18,}")
+
+
+def room_shaped_user_id(user_id) -> bool:
+    """True for a Matrix room id / opaque platform id — can never own a fact."""
+    if not isinstance(user_id, str) or not user_id:
+        return False
+    return user_id.startswith("!") or bool(_ROOM_USER_ID_RE.fullmatch(user_id))
 
 
 def _now_iso() -> str:
@@ -419,6 +438,17 @@ class SQLiteStorage(LimbicStorage):
             if legacy in cols:
                 db.execute(f"ALTER TABLE facts DROP COLUMN {legacy}")
 
+        # Split provenance (sprint C5): children of an atomic soft-split carry
+        # the parent fact's id; the parent row itself is provenance-only —
+        # deliberately NO vec_index row (so it can never surface in KNN) plus
+        # split_role='parent' (so orphan diagnostics can tell intent from a
+        # broken write, and FTS/graph lanes can exclude it).
+        cols = {r["name"] for r in db.execute("PRAGMA table_info(facts)").fetchall()}
+        if "split_parent_id" not in cols:
+            db.execute("ALTER TABLE facts ADD COLUMN split_parent_id INTEGER")
+        if "split_role" not in cols:
+            db.execute("ALTER TABLE facts ADD COLUMN split_role TEXT")
+
         # FTS5 virtual table for full-text search (external content table)
         db.execute("""
             CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
@@ -555,7 +585,11 @@ class SQLiteStorage(LimbicStorage):
     # ── Core CRUD ──────────────────────────────────────────────────
 
     def store(self, content: str, user_id: str, embedding: list[float],
-              metadata: dict) -> int:
+              metadata: dict, principal_vouched: bool = False) -> int:
+        if room_shaped_user_id(user_id) and not principal_vouched:
+            raise ValueError(
+                f"user-scope boundary: room-shaped user_id {user_id!r} "
+                "cannot own facts (wrong-principal scope)")
         now_iso = _now_iso()
         params = (
             content,
@@ -589,6 +623,72 @@ class SQLiteStorage(LimbicStorage):
             return fact_id
         return self._write_txn(_txn)
 
+    def store_split(self, content: str, user_id: str,
+                    children: list[dict],
+                    principal_vouched: bool = False) -> dict:
+        """Atomic soft-split write (sprint C5).
+
+        One transaction lands the parent provenance row (content-only, NO
+        vec_index row, split_role='parent' — it can never surface in recall)
+        plus every child fact with its own embedding, provenance columns and
+        per-child contradiction links. Either everything lands or nothing
+        does — a mid-batch failure (dim mismatch, corruption) rolls the
+        parent and all siblings back. Trust penalties on pre-existing facts
+        were applied during the pre-insert scan (provider side), as on the
+        whole-fact path.
+
+        children: [{"content", "embedding", "trust_score",
+                    "contradictions": [older_fact_id, ...]]} — sibling
+        similarity scans already ran and excluded each other (provider side);
+        what arrives here is only the pre-decided write.
+        """
+        if room_shaped_user_id(user_id) and not principal_vouched:
+            raise ValueError(
+                f"user-scope boundary: room-shaped user_id {user_id!r} "
+                "cannot own facts (wrong-principal scope)")
+        now_iso = _now_iso()
+
+        def _txn():
+            cur = self._db.execute(
+                """INSERT INTO facts (content, user_id, trust_score,
+                   retrieval_count, last_retrieved, matured_at,
+                   atrophy_marked_at, created_at, updated_at,
+                   split_parent_id, split_role)
+                   VALUES (?, ?, 0.5, 0, NULL, NULL, NULL, ?, ?, NULL, 'parent')""",
+                (content, user_id, now_iso, now_iso),
+            )
+            parent_id = int(cur.lastrowid or 0)
+
+            child_ids = []
+            for ch in children:
+                ccur = self._db.execute(
+                    """INSERT INTO facts (content, user_id, trust_score,
+                       retrieval_count, last_retrieved, matured_at,
+                       atrophy_marked_at, created_at, updated_at,
+                       split_parent_id, split_role)
+                       VALUES (?, ?, ?, 0, NULL, NULL, NULL, ?, ?, ?, 'child')""",
+                    (ch["content"], user_id,
+                     ch.get("trust_score", 0.5), now_iso, now_iso, parent_id),
+                )
+                child_id = int(ccur.lastrowid or 0)
+                # A failure here (e.g. dim mismatch) rolls the whole split —
+                # parent, siblings, links — back together via _write_txn.
+                self._db.execute(
+                    "INSERT INTO vec_index(rowid, embedding) VALUES (?, ?)",
+                    (child_id, _serialize_vec(ch["embedding"])),
+                )
+                for older_id in ch.get("contradictions", []):
+                    self._db.execute(
+                        """INSERT OR IGNORE INTO contradictions
+                           (newer_fact_id, older_fact_id, created_at, nli_label, resolved_at)
+                           VALUES (?, ?, ?, 'contradiction', NULL)""",
+                        (child_id, older_id, now_iso),
+                    )
+                child_ids.append(child_id)
+
+            return {"parent_fact_id": parent_id, "child_fact_ids": child_ids}
+        return self._write_txn(_txn)
+
     def search(self, embedding: list[float], filters: dict, limit: int) -> list[dict]:
         with self._lock:
             query_vec = _serialize_vec(embedding)
@@ -605,7 +705,8 @@ class SQLiteStorage(LimbicStorage):
                        f.content, f.user_id, f.trust_score,
                        f.retrieval_count, f.last_retrieved,
                        f.matured_at, f.atrophy_marked_at,
-                       f.created_at, f.updated_at
+                       f.created_at, f.updated_at,
+                       f.split_parent_id
                 FROM (SELECT rowid, distance FROM vec_index WHERE embedding MATCH ? ORDER BY distance LIMIT ?) AS knn
                 JOIN facts f ON knn.rowid = f.fact_id
                 WHERE 1=1
@@ -639,6 +740,9 @@ class SQLiteStorage(LimbicStorage):
             parsed = []
             for r in results:
                 distance = r["distance"]
+                if distance is None:  # unparseable vec row: skip rather than crash the search path
+                    logger.warning("limbic: SQLite KNN row %s has NULL distance — skipped", r["fact_id"])
+                    continue
                 score = 1.0 - distance
                 parsed.append({
                     "fact_id": r["fact_id"],
@@ -654,6 +758,7 @@ class SQLiteStorage(LimbicStorage):
                     "score": score,
                     "vector_score": score,  # declared at the source: real cosine
                     "atrophy_marked_at": r["atrophy_marked_at"],
+                    "split_parent_id": r["split_parent_id"],
                 })
 
             return parsed
@@ -675,6 +780,8 @@ class SQLiteStorage(LimbicStorage):
                         "matured_at": row["matured_at"],
                         "created_at": row["created_at"],
                         "updated_at": row["updated_at"],
+                        "split_parent_id": row["split_parent_id"],
+                        "split_role": row["split_role"],
                     }
             except sqlite3.DatabaseError as e:
                 logger.error("limbic: get fact %d failed (possible corruption): %s", fact_id, e)
@@ -731,7 +838,8 @@ class SQLiteStorage(LimbicStorage):
             rows = self._db.execute(
                 """SELECT fact_id, content, user_id, trust_score,
                       retrieval_count, last_retrieved, matured_at,
-                      atrophy_marked_at, created_at, updated_at
+                      atrophy_marked_at, created_at, updated_at,
+                      split_parent_id, split_role
                    FROM facts WHERE user_id = ? ORDER BY fact_id""",
                 (user_id,)
             ).fetchall()
@@ -749,6 +857,8 @@ class SQLiteStorage(LimbicStorage):
                     "atrophy_marked_at": r["atrophy_marked_at"],
                     "created_at": r["created_at"],
                     "updated_at": r["updated_at"],
+                    "split_parent_id": r["split_parent_id"],
+                    "split_role": r["split_role"],
                 })
 
             return {"user_id": user_id, "fact_count": len(facts), "facts": facts}
@@ -1017,10 +1127,14 @@ class SQLiteStorage(LimbicStorage):
                        f.retrieval_count,
                        f.last_retrieved, f.matured_at, f.atrophy_marked_at,
                        f.created_at, f.updated_at,
+                       f.split_parent_id,
                        bm25(facts_fts) AS fts_score
                 FROM facts_fts
                 JOIN facts f ON facts_fts.rowid = f.fact_id
                 WHERE {where_clause}
+                -- split parents are provenance-only (sprint C5): they carry no
+                -- vector, so they must never surface through the FTS lane
+                  AND (f.split_role IS NULL OR f.split_role != 'parent')
                 ORDER BY fts_score
                 LIMIT {limit}
             """
@@ -1050,6 +1164,7 @@ class SQLiteStorage(LimbicStorage):
                     "score": r["fts_score"],
                     "vector_score": None,  # explicit absence: BM25 is not a cosine
                     "atrophy_marked_at": r["atrophy_marked_at"],
+                    "split_parent_id": r["split_parent_id"],
                 })
 
             return parsed
@@ -1086,6 +1201,66 @@ class SQLiteStorage(LimbicStorage):
                     "INSERT OR IGNORE INTO mentions (fact_id, entity_id) VALUES (?, ?)",
                     (fact_id, ent_id)
                 )
+        return self._write_txn(_txn)
+
+    def gc_entities(self, junk_match=None, apply: bool = False) -> dict:
+        """Entity-graph hygiene sweep, one pass.
+
+        Classes, all measured in the live transaction (never a cached audit
+        snapshot):
+          junk_entities   — entity rows whose (name, type) matches the NER
+                            junk filter; their mention rows cascade with them
+          orphan_mentions — mention rows whose fact_id is gone (legacy rows
+                            predating the foreign_keys pragma)
+          orphan_entities — entity rows with zero mentions (the quality
+                            report's orphan-entity SQL, verbatim)
+
+        apply=False measures the classes without deleting; apply=True deletes
+        and re-verifies. Counts reflect what THIS call saw — assert them
+        against an independently measured store state before trusting the sweep.
+        """
+        ORPHAN_ENTITIES_SQL = (
+            "SELECT COUNT(*) FROM entities "
+            "WHERE entity_id NOT IN (SELECT DISTINCT entity_id FROM mentions)"
+        )
+        ORPHAN_MENTIONS_SQL = (
+            "SELECT COUNT(*) FROM mentions "
+            "WHERE fact_id NOT IN (SELECT fact_id FROM facts)"
+        )
+
+        def _txn():
+            counts: dict = {}
+            junk_ids: list[str] = []
+            if junk_match is not None:
+                for row in self._db.execute(
+                        "SELECT entity_id, name, type FROM entities").fetchall():
+                    if junk_match(row["name"], row["type"] or "UNKNOWN"):
+                        junk_ids.append(row["entity_id"])
+            counts["junk_entities"] = len(junk_ids)
+            counts["orphan_entities"] = self._db.execute(ORPHAN_ENTITIES_SQL).fetchone()[0]
+            counts["orphan_mentions"] = self._db.execute(ORPHAN_MENTIONS_SQL).fetchone()[0]
+            if not apply:
+                return counts
+
+            if junk_ids:
+                ph = ",".join("?" * len(junk_ids))
+                cur = self._db.execute(
+                    f"DELETE FROM mentions WHERE entity_id IN ({ph})", junk_ids)
+                counts["junk_mentions_deleted"] = max(cur.rowcount, 0)
+                self._db.executemany(
+                    "DELETE FROM entities WHERE entity_id = ?",
+                    [(i,) for i in junk_ids])
+            cur = self._db.execute(
+                "DELETE FROM mentions WHERE fact_id NOT IN (SELECT fact_id FROM facts)")
+            counts["orphan_mentions_deleted"] = max(cur.rowcount, 0)
+            cur = self._db.execute(
+                "DELETE FROM entities WHERE entity_id NOT IN "
+                "(SELECT DISTINCT entity_id FROM mentions)")
+            counts["orphan_entities_deleted"] = max(cur.rowcount, 0)
+            # Post-sweep verification against the live store.
+            counts["remaining_orphan_entities"] = self._db.execute(ORPHAN_ENTITIES_SQL).fetchone()[0]
+            return counts
+
         return self._write_txn(_txn)
 
     def search_graph(self, entity_names: list[str], filters: dict, limit: int) -> list[dict]:
@@ -1126,9 +1301,13 @@ class SQLiteStorage(LimbicStorage):
             sql = f"""
                 SELECT fact_id, content, user_id, trust_score,
                        retrieval_count, last_retrieved, matured_at,
-                       atrophy_marked_at, created_at, updated_at
+                       atrophy_marked_at, created_at, updated_at,
+                       split_parent_id
                 FROM facts
                 WHERE fact_id IN ({placeholders})
+                  -- split parents are provenance-only (sprint C5) — no vector,
+                  -- never surface through the graph lane either
+                  AND (split_role IS NULL OR split_role != 'parent')
             """
             if where_clause:
                 sql += f" AND {where_clause}"
@@ -1159,6 +1338,7 @@ class SQLiteStorage(LimbicStorage):
                     "score": 0.0,
                     "vector_score": None,  # explicit absence: graph lane has no cosine
                     "atrophy_marked_at": r["atrophy_marked_at"],
+                    "split_parent_id": r["split_parent_id"],
                 })
 
             return parsed
@@ -1173,34 +1353,54 @@ class SQLiteStorage(LimbicStorage):
             )
         return self._write_txn(_txn)
 
-    def sweep_atrophy(self, before_iso: str, limit: int = 3, user_id: str = "") -> int:
+    def unmark_atrophy(self, fact_id: int) -> None:
+        """Clear the mark after trust recovers above the threshold (C4) — the
+        sweep does not re-check trust, so a recovered mark must not ride the
+        old grace clock into the reap cohort."""
+        def _txn():
+            self._db.execute(
+                "UPDATE facts SET atrophy_marked_at = NULL WHERE fact_id = ?",
+                (fact_id,)
+            )
+        return self._write_txn(_txn)
+
+    def sweep_atrophy(self, before_iso: str, limit: int = 3, user_id: str = "",
+                      exclude_ids: set[int] | None = None) -> int:
         """Delete facts whose atrophy mark is older than before_iso.
 
-        Optional user_id scopes the sweep to that user; without it the
-        sweep is global (legacy callers). Single transaction — all-or-nothing.
+        C4 reap guard — a marked fact is never swept when it is
+        retrieval_count >= 5 (surfaced 5+ times), the older_fact_id of an
+        UNRESOLVED contradiction link, or explicitly excluded by the
+        provider (reap_guard_excludes: chain-collateral facts blessed for
+        retention by the C2 replay). Protected facts keep their mark parked;
+        the guard decides again on every sweep. Optional user_id scopes the
+        sweep to that user; without it the sweep is global (legacy callers).
+        Single transaction — all-or-nothing.
         """
         def _txn():
+            sql = """SELECT fact_id FROM facts
+                     WHERE atrophy_marked_at IS NOT NULL
+                     AND atrophy_marked_at < ?
+                     AND COALESCE(retrieval_count, 0) < 5
+                     AND NOT EXISTS (
+                       SELECT 1 FROM contradictions c
+                       WHERE c.older_fact_id = facts.fact_id
+                         AND c.resolved_at IS NULL)"""
+            where: list = []
+            params: list = [before_iso]
             if user_id:
-                rows = self._db.execute(
-                    """SELECT fact_id FROM facts
-                       WHERE atrophy_marked_at IS NOT NULL
-                       AND atrophy_marked_at < ?
-                       AND user_id = ?
-                       LIMIT ?""",
-                    (before_iso, user_id, limit)
-                ).fetchall()
-            else:
-                rows = self._db.execute(
-                    """SELECT fact_id FROM facts
-                       WHERE atrophy_marked_at IS NOT NULL
-                       AND atrophy_marked_at < ?
-                       LIMIT ?""",
-                    (before_iso, limit)
-                ).fetchall()
+                where.append("user_id = ?")
+                params.append(user_id)
+            for w in where:
+                sql += f"\nAND {w}"
+            rows = self._db.execute(sql + " LIMIT ?", (*params, limit)).fetchall()
 
+            guard = set(exclude_ids or ())
             deleted = 0
             for r in rows:
                 fid = r["fact_id"]
+                if fid in guard:
+                    continue  # excluded cohort: mark stays parked, never swept
                 self._db.execute("DELETE FROM facts WHERE fact_id = ?", (fid,))
                 self._db.execute("DELETE FROM vec_index WHERE rowid = ?", (fid,))
                 deleted += 1
@@ -1246,11 +1446,20 @@ class SQLiteStorage(LimbicStorage):
             with self._lock:
                 # Stream fact rows in batches: we hold only fact_id+content +
                 # the new embeddings, not the full result set.
-                cur = self._db.execute("SELECT fact_id, content FROM facts")
+                # split parents (sprint C5) are provenance-only: they carry
+                # deliberately no vector and are EXCLUDED from re-embedding so
+                # they never re-enter vec_index; total counts them only for the
+                # stream report.
+                cur = self._db.execute(
+                    "SELECT fact_id, content FROM facts "
+                    "WHERE split_role IS NULL OR split_role != 'parent'")
                 embedded: list[tuple[int, list[float]]] = []
                 total = 0
                 errors = 0
                 skipped_blank = 0
+                total += self._db.execute(
+                    "SELECT COUNT(*) FROM facts WHERE split_role = 'parent'"
+                ).fetchone()[0]
                 while True:
                     rows = cur.fetchmany(500)
                     if not rows:

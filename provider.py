@@ -21,6 +21,7 @@ from agent.memory_provider import MemoryProvider, RecallStatus
 
 from .embeddings import create_embedder, LimbicEmbedder
 from .nli import create_nli_classifier, LimbicNLI
+from .splitting import split_structured
 from .storage import LimbicStorage
 from .trust import TrustEngine
 
@@ -168,7 +169,11 @@ class LimbicMemoryProvider(MemoryProvider):
                     label, _, pat = str(entry).partition(":")
                     if label and pat:
                         patterns.append({"label": label.strip(), "pattern": pat.strip()})
-                self._entity_extractor = EntityExtractor(languages=languages, known_patterns=patterns)
+                self._entity_extractor = EntityExtractor(
+                    languages=languages,
+                    known_patterns=patterns,
+                    junk_words=[str(w).strip() for w in (self._config.get("entity_junk_words") or []) if str(w).strip()],
+                )
             except Exception as e:
                 logger.warning("limbic: entity extractor init failed: %s", e)
                 self._entity_extractor = None
@@ -283,6 +288,74 @@ class LimbicMemoryProvider(MemoryProvider):
                 return True
         return False
 
+    # Fragment-gate C6 legs: anti-fact heuristics for the verbatim-speech
+    # classes (verbatim questions, quoted user speech, sub-threshold
+    # utterances) with a durable-marker escape (dates / known principals /
+    # watch-style intent requests). Precision-first: a false escape leaves a
+    # marginal fact stored where decay + the atrophy lane can retire it; a
+    # false rejection loses a durable fact silently.
+    # _CHAT_SPEECH_MAX bounds the question/quote legs: verbatim chat speech
+    # is short; longer question-tailed or quote-leading dumps are paragraph
+    # facts (splitter/atrophy lane), not the fragment gate's lane.
+    _CHAT_SPEECH_MAX = 240
+    _DURABLE_DATE_RE = re.compile(
+        r"\b(\d{4}-\d{1,2}-\d{1,2}"
+        r"|\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?"
+        r"|(?:19|20)\d{2}\b"
+        r"|\d{1,2}\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?"
+        r"|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?(,?\s*(?:19|20)\d{2})?"
+        r")",
+        re.IGNORECASE,
+    )
+    # Durable intents phrased as questions ("Should we watch Severance
+    # tonight?") escape the question leg; deictic objects ("use it") do not
+    # count as durable.
+    _REQUEST_INTENT_RE = re.compile(
+        r"\b(?:can|should|shall|could|will)\s+(?:we|i)\s+"
+        r"(?:watch|see|catch|stream|read|listen|try|buy|get|attend|book|check|use|install|plan|order)\b"
+        r"(?!\s+(?:it|this|that|them|those|here)\b)",
+        re.IGNORECASE,
+    )
+    # Raw quote-codepoints that mark content as quoted speech when they lead
+    # the string: straight, curly, single and double.
+    _QUOTE_OPENERS = "\"'\u201c\u201d\u2018\u2019"
+
+    def _make_principal_re(self):
+        """Known-principal name matcher from the identity manifest.
+
+        Manifest only — storage user_ids carry junk buckets ('6', 'general')
+        that must never act as a durable-entity escape. None in single-user
+        mode: without a name signal the flat band is skipped and the pair
+        gate stays the sole short-string rule.
+        """
+        manifest = getattr(self, "_manifest", None)
+        if manifest is None or not getattr(manifest, "user_count", 0):
+            return None
+        names = set()
+        for canon in manifest.canonical_names:
+            names.add(str(canon).title())
+            try:
+                ident = manifest.resolve_by_canonical(canon)
+            except Exception:
+                ident = None
+            if ident and getattr(ident, "display_name", None):
+                names.add(str(ident.display_name))
+        if not names:
+            return None
+        return re.compile(
+            r"\b(?:" + "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True)) + r")\b"
+        )
+
+    def _has_durable_marker(self, text: str) -> bool:
+        """Escape set for the fragment-gate legs: a concrete date, a known
+        principal, or a watch/intent request pattern (plan §C6)."""
+        if self._DURABLE_DATE_RE.search(text):
+            return True
+        principal = self._make_principal_re()
+        if principal and principal.search(text):
+            return True
+        return bool(self._REQUEST_INTENT_RE.search(text))
+
     def remember(self, content: str, user_id: str | None = None,
                  session_id: str | None = None) -> dict:
         """Store a fact. The hippocampus encodes experience into memory."""
@@ -293,6 +366,7 @@ class LimbicMemoryProvider(MemoryProvider):
         if uid is None:
             return {"error": "No user_id resolved"}
 
+        manifest_ok = False
         # L3 (plan 2026-10-24): unresolved/garbage ids must not become memory
         # buckets (audit: 4 facts stored under user_id='6'). A manifest-known
         # canonical or a well-formed MXID passes; anything else resolves to
@@ -301,17 +375,43 @@ class LimbicMemoryProvider(MemoryProvider):
             manifest = getattr(self, "_manifest", None)
             if manifest is not None:
                 known = {c.lower() for c in manifest.canonical_names}
+                if uid.lower() in known:
+                    manifest_ok = True
                 if uid.lower() not in known:
                     # Resolve the raw platform id against the manifest first:
                     # _current_user_id can itself be the unresolved raw id, and
                     # falling back to it is how an orphan bucket gets minted.
                     ident = manifest.resolve(str(uid), "")
                     fallback = ident.canonical if ident else self._current_user_id
+                    if ident is not None:
+                        # The manifest just resolved this id to a canonical —
+                        # that claim outranks the shape heuristic even when
+                        # the canonical name itself is room-shaped (the
+                        # round-2 probe: mattermost id → 19-char single-word
+                        # canonical → re-attribution must survive).
+                        manifest_ok = True
                     if fallback:
                         logger.warning(
                             "limbic: remember uid %r not in manifest — attributing to %s",
                             uid, fallback)
                         uid = fallback
+
+        # User-scope boundary (sprint C8): a room-shaped uid can never own a
+        # fact — recall resolves principals, so a room/platform-id scope is
+        # unreachable storage. L3 above re-attributes manifest-resolvable ids
+        # (e.g. a since-registered platform id); a room-shaped id that
+        # survives that correction is refused instead of minted — the exact
+        # shape of the 2026-11-04/05 mattermost-id orphan facts. A manifest-
+        # resolved canonical skips the shape check: the manifest is the
+        # stronger claim (a single-word 19+ char username is a person, and the
+        # review round's constantinamargaret probe would otherwise lose
+        # memories silently).
+        from .store_sqlite import room_shaped_user_id
+        if room_shaped_user_id(uid) and not manifest_ok:
+            logger.warning(
+                "limbic: rejected room-scoped user_id %r — wrong-principal scope", uid)
+            return {"status": "rejected_room_scoped",
+                    "reason": "user_id names a room/platform id, not a principal"}
 
         # Reject ephemeral date facts — they go stale and cause confusion
         if self._is_ephemeral_date_fact(content):
@@ -321,26 +421,60 @@ class LimbicMemoryProvider(MemoryProvider):
         # L3 (plan 2026-10-24): host-frame junk gate — the gateway's own
         # session framing must never be stored as a fact. Mechanical: this is
         # OUR literal wrapper text, not a content classification.
+        # C5 golden-set adjudication (sprint C5 review): ephemeral background
+        # process / delegation dumps are host framing too — rejected BEFORE
+        # the splitter so they never become parent+children facts.
         for frame in ("[OUT-OF-BAND USER MESSAGE", "[CONTEXT COMPACTION",
-                      "delivered once at this position"):
+                      "delivered once at this position",
+                      "[IMPORTANT: Background process",
+                      "background process results arrived while this session was busy",
+                      "[Background process proc_",
+                      "[ASYNC DELEGATION BATCH COMPLETE"):
             if frame in content:
                 logger.info("limbic: rejected host-frame text (len=%d)", len(content))
                 return {"status": "rejected_host_frame",
                         "reason": "session framing text is not a fact"}
 
-        # ponytail: fragment gate — both conditions must fail to reject.
-        # words<3 catches the real junk (1-2 word steering/ack messages:
-        # "yes", "ok", "proceed", "shut up"); dense short facts
-        # ("Grace is vegan") pass and decay handles anything marginal.
-        # Thresholds tunable in limbic.yaml.
+        # Fragment gate (sprint C6 — the plan's 40-char threshold absorbed
+        # into this gate, not a parallel mechanism).
+        #   pair leg: len<chars AND words<words — 1-2 word acks ("yes", "ok").
+        #     Dense short facts ("Grace is vegan") carry a principal and pass.
+        #   question leg: a bare verbatim question is conversational, unless
+        #     it carries a durable marker (date / principal / watch intent).
+        #   flat leg: len<40 with no durable marker — sub-threshold chat
+        #     utterances that have too many words for the pair leg. Multi-user
+        #     manifests only; without entity names there is no reliable
+        #     escape, so the pair leg stays the sole short-string rule.
+        #   quoted-speech leg: content opening with a raw quote and no
+        #     durable marker (no provenance prefix) is quoted user speech.
+        # All legs return the same status; the class rides in the reason for
+        # the post-deploy rejection-log review.
         gate_chars = int(self._config.get("fragment_gate_chars", 60))
         gate_words = int(self._config.get("fragment_gate_words", 3))
+        gate_flat = int(self._config.get("fragment_gate_flat_chars", 40))
         stripped = content.strip()
         if len(stripped) < gate_chars and len(stripped.split()) < gate_words:
             logger.info("limbic: rejected fragment (len=%d, words=%d)",
                         len(stripped), len(stripped.split()))
             return {"status": "rejected_fragment",
                     "reason": f"Too short to be a durable fact (<{gate_chars} chars and <{gate_words} words)."}
+        if not self._has_durable_marker(stripped):
+            if (len(stripped) < self._CHAT_SPEECH_MAX
+                    and stripped.rstrip('"\'\u201d\u2019 ').endswith("?")):
+                logger.info("limbic: rejected fragment (len=%d, class=verbatim_question)",
+                            len(stripped))
+                return {"status": "rejected_fragment",
+                        "reason": "Verbatim question is conversational, not a durable fact."}
+            if len(stripped) < gate_flat and self._make_principal_re() is not None:
+                logger.info("limbic: rejected fragment (len=%d, words=%d, class=subthreshold)",
+                            len(stripped), len(stripped.split()))
+                return {"status": "rejected_fragment",
+                        "reason": f"Sub-threshold utterance with no durable marker (<{gate_flat} chars)."}
+            if len(stripped) < self._CHAT_SPEECH_MAX and stripped and stripped[0] in self._QUOTE_OPENERS:
+                logger.info("limbic: rejected fragment (len=%d, class=quoted_speech)",
+                            len(stripped))
+                return {"status": "rejected_fragment",
+                        "reason": "Quoted speech without provenance is conversational, not a durable fact."}
 
         # Guardian case: detect if the fact is about another user
         # "Bob is interested in Harry Potter" → user_id=bob, not grace
@@ -349,6 +483,13 @@ class LimbicMemoryProvider(MemoryProvider):
             logger.info("limbic: guardian write — fact about %s stored under %s (told by %s)",
                         target_user, target_user, uid)
             uid = target_user
+        # Atomic soft-split (sprint C5): long content with DETECTED structure
+        # (sections/lists/paragraphs) embeds better as child facts. Single
+        # narratives fall through to the whole-fact path unchanged.
+        split_result = self._plan_soft_split(content, uid, manifest_ok=manifest_ok)
+        if split_result is not None:
+            return split_result
+
 
         # Generate embedding
         embedding = self._embedder.embed(content)
@@ -362,24 +503,79 @@ class LimbicMemoryProvider(MemoryProvider):
             limit=5,
         )
 
-        # ── NLI-aware interference and correction detection ────────
-        #
-        # The flow runs NLI at every similarity band above 0.60 and branches
-        # on the label:
-        #
-        #   contradiction → store correction + penalise old fact's trust
-        #   entailment    → consistent — no penalty (store new fact normally)
-        #   neutral       → depends on similarity band:
-        #     >0.85  → interference penalty (high similarity, not related = replacement)
-        #     >0.70  → deduplicate (same topic, not related = redundant)
-        #     >0.60  → no action (related but distinct — store normally)
-        #
-        # Contradictions are NEVER deduplicated — the correction must be stored
-        # so it can mature and replace the stale fact through trust dynamics.
-        #
-        # This runs at WRITE TIME, so it works in all session types — not just
-        # continuous gateway sessions.
+        # Write-time NLI interference/correction decision (mechanism doc on
+        # _nli_scan; the split path reuses the SAME helper against the
+        # pre-insert store).
+        scan = self._nli_scan(similar, content)
+        if scan["decision"] == "dedup":
+            return {"status": "deduplicated", "fact_id": scan["dedup_fact_id"]}
+        contradicted_ids = scan["contradicted_ids"]
 
+        # Bayesian surprise — how novel is this fact?
+        surprise = self._compute_surprise(embedding, uid)
+        initial_trust = 0.5
+        if surprise > self._trust.surprise_percentile_value():
+            initial_trust = 0.5 + self._trust.surprise_boost_value()
+
+        # Store
+        fact_id = self._storage.store(
+            content=content,
+            user_id=uid,
+            embedding=embedding,
+            metadata={
+                "trust_score": initial_trust,
+                "retrieval_count": 0,
+                "created_at": _now_iso(),
+            },
+            principal_vouched=manifest_ok,
+        )
+
+        logger.debug("limbic: stored fact_id=%d user=%s trust=%.2f surprise=%.2f",
+                     fact_id, uid, initial_trust, surprise)
+
+        # Continuing correction: link this fact to each older fact it contradicts.
+        # The write-time penalty above is one-shot; the link is what lets the tick
+        # re-assert the correction if the older fact's trust recovers later.
+        for older_id in contradicted_ids:
+            try:
+                self._storage.link_contradiction(fact_id, older_id)
+            except Exception as e:
+                logger.warning("limbic: could not link contradiction %d→%d: %s",
+                               fact_id, older_id, e)
+
+        # Extract entities and create graph edges (NLP)
+        if self._entity_extractor and self._entity_extractor.available:
+            entities = self._entity_extractor.extract(content)
+            if entities:
+                self._storage.store_entities(fact_id, entities)
+                logger.debug("limbic: extracted %d entities from fact %d",
+                             len(entities), fact_id)
+
+        return {"status": "stored", "fact_id": fact_id}
+
+    def _nli_scan(self, similar: list[dict], content: str) -> dict:
+        """Write-time NLI interference/correction decision for ONE candidate
+        fact, shared by the whole-fact path and the split path (sprint C5
+        calls it per child against the PRE-insert store — siblings do not
+        exist yet, which is the sibling exclusion).
+
+        The flow runs NLI at every similarity band above 0.60 and branches
+        on the label:
+
+          contradiction → store correction + penalise old fact's trust
+          entailment    → consistent — no penalty (store new fact normally)
+          neutral       → depends on similarity band:
+            >0.85  → interference penalty (high similarity, not related = replacement)
+            >0.70  → deduplicate (same topic, not related = redundant)
+            >0.60  → no action (related but distinct — store normally)
+
+        Contradictions are NEVER deduplicated. Penalties on pre-existing
+        facts are applied immediately (same semantics as this path always
+        had); the return carries the decision about the CANDIDATE only:
+            {"decision": "store"} — "contradicted_ids" to link once the
+                                    candidate has a fact_id
+            {"decision": "dedup"} — candidate redundant; "dedup_fact_id"
+        """
         should_deduplicate = False
         dedup_fact_id = None
         # Older facts NLI flagged as contradicted by this write. The link cannot
@@ -388,7 +584,7 @@ class LimbicMemoryProvider(MemoryProvider):
         p_entail = 0.0               # graded above tau — recorded in the evidence log
 
         # Correction cue is content-constant — evaluate once, not per
-        # similar-fact iteration (delegate review deleg_8b449d32 amendment).
+        # similar-fact iteration (review amendment).
         cued_correction = (self._trust is not None
                            and self._trust.is_correction(content))
 
@@ -422,8 +618,14 @@ class LimbicMemoryProvider(MemoryProvider):
                 # ── Correction detected ────────────────────────────────
                 # Penalise the old fact's trust so it fades. Store the new fact
                 # (don't deduplicate) so the correction can mature and replace it.
+                # Floored like the interference dock: repeated supersession
+                # chains must not grave the fact below the correction floor,
+                # and min(old, floor) never raises an already-lower fact.
                 penalty = self._trust.correction_penalty_value()
-                new_trust = max(0.0, old_trust - penalty)
+                new_trust = max(
+                    min(old_trust, self._trust.correction_floor_value()),
+                    old_trust - penalty,
+                )
 
                 self._storage.update(existing["fact_id"], trust_score=new_trust)
                 logger.debug(
@@ -484,51 +686,90 @@ class LimbicMemoryProvider(MemoryProvider):
                     should_deduplicate = True
                     dedup_fact_id = existing["fact_id"]
                 # 0.60-0.70 neutral: store normally — related but distinct
-
-        # Check deduplication result
         if should_deduplicate:
-            return {"status": "deduplicated", "fact_id": dedup_fact_id}
+            return {"decision": "dedup", "dedup_fact_id": dedup_fact_id,
+                    "contradicted_ids": contradicted_ids}
+        return {"decision": "store", "dedup_fact_id": None,
+                "contradicted_ids": contradicted_ids}
 
-        # Bayesian surprise — how novel is this fact?
-        surprise = self._compute_surprise(embedding, uid)
-        initial_trust = 0.5
-        if surprise > self._trust.surprise_percentile_value():
-            initial_trust = 0.5 + self._trust.surprise_boost_value()
+    def _plan_soft_split(self, content: str, uid: str,
+                         manifest_ok: bool = False) -> dict | None:
+        """Atomic soft-split path (sprint C5); None falls through to the
+        whole-fact write.
 
-        # Store
-        fact_id = self._storage.store(
-            content=content,
-            user_id=uid,
-            embedding=embedding,
-            metadata={
-                "trust_score": initial_trust,
-                "retrieval_count": 0,
-                "created_at": _now_iso(),
-            },
+        Sibling-exempt write path — review finding on the plain-sequential
+        design: siblings measure 0.70–0.85 cosine, so scanning AFTER insert
+        would NLI-dedup every later child (never stored) or dock an existing
+        fact as interference. Here EVERY child is embedded and similarity-
+        scanned BEFORE the first insert — siblings do not exist during any
+        scan and are structurally excluded. The single write (parent
+        provenance row, all children, their links) is ONE transaction in
+        store_split(): a mid-batch failure stores nothing.
+        """
+        frags = split_structured(
+            content,
+            min_total=int(self._config.get("split_threshold_chars", 700)),
+            min_child=int(self._config.get("split_child_min_chars", 120)),
         )
+        if not frags or len(frags) < 2:
+            return None
 
-        logger.debug("limbic: stored fact_id=%d user=%s trust=%.2f surprise=%.2f",
-                     fact_id, uid, initial_trust, surprise)
+        children: list[dict] = []
+        for frag in frags:
+            embedding = self._embedder.embed(frag)
+            if embedding is None:
+                return {"error": "Embedding generation failed"}
+            # Scan the CURRENT store only — siblings are still uninserted, so
+            # they cannot appear here; this is the sibling exclusion.
+            similar = self._storage.search(
+                embedding=embedding,
+                filters={"user_id": uid},
+                limit=5,
+            )
+            scan = self._nli_scan(similar, frag)
+            if scan["decision"] == "dedup":
+                # Redundant with a PRE-EXISTING fact (never a sibling, which
+                # is not in the store yet) — dropped the way a whole write
+                # would be; the parent keeps its full text.
+                continue
+            children.append({
+                "content": frag,
+                "embedding": embedding,
+                "trust_score": 0.5,
+                "contradictions": scan["contradicted_ids"],
+            })
 
-        # Continuing correction: link this fact to each older fact it contradicts.
-        # The write-time penalty above is one-shot; the link is what lets the tick
-        # re-assert the correction if the older fact's trust recovers later.
-        for older_id in contradicted_ids:
-            try:
-                self._storage.link_contradiction(fact_id, older_id)
-            except Exception as e:
-                logger.warning("limbic: could not link contradiction %d→%d: %s",
-                               fact_id, older_id, e)
+        if not children:
+            # Every section matched an existing fact — the split carries no
+            # novel information; report it as a plain dedup instead of
+            # minting a parent row for nothing.
+            return {"status": "deduplicated", "deduplicated_parts": len(frags)}
 
-        # Extract entities and create graph edges (NLP)
+        stored = self._storage.store_split(content, uid, children,
+                                           principal_vouched=manifest_ok)
+        logger.debug("limbic: stored split parent=%d children=%d user=%s",
+                     stored["parent_fact_id"], len(stored["child_fact_ids"]), uid)
+
+        # Entities per child — post-transaction, best effort (same posture as
+        # the whole-fact path's post-store extraction).
         if self._entity_extractor and self._entity_extractor.available:
-            entities = self._entity_extractor.extract(content)
-            if entities:
-                self._storage.store_entities(fact_id, entities)
-                logger.debug("limbic: extracted %d entities from fact %d",
-                             len(entities), fact_id)
+            for child_id, child in zip(stored["child_fact_ids"], children):
+                try:
+                    entities = self._entity_extractor.extract(child["content"])
+                    if entities:
+                        self._storage.store_entities(child_id, entities)
+                        logger.debug("limbic: extracted %d entities from split child %d",
+                                     len(entities), child_id)
+                except Exception as e:
+                    logger.warning("limbic: split child %d entity extraction failed: %s",
+                                   child_id, e)
 
-        return {"status": "stored", "fact_id": fact_id}
+        return {
+            "status": "stored_split",
+            "parent_fact_id": stored["parent_fact_id"],
+            "child_fact_ids": stored["child_fact_ids"],
+        }
+
 
     def _compute_surprise(self, embedding: list[float], user_id: str) -> float:
         """Bayesian surprise — how novel is this fact relative to the user's existing facts?
@@ -758,7 +999,12 @@ class LimbicMemoryProvider(MemoryProvider):
                                                top_row),
                     "best_excerpt": (top_row.get("content") or "")[:120]}
         return {
-            "results": [{"content": r["content"]} for r in results],
+            "results": [
+                {**({"parent_fact_id": r["split_parent_id"]}
+                    if r.get("split_parent_id") else {}),
+                 "content": r["content"]}
+                for r in results
+            ],
             "count": len(results),
             "status": "ok",
             "top_score": round(top, 4),
@@ -1127,9 +1373,11 @@ class LimbicMemoryProvider(MemoryProvider):
             overlap = self._trust.text_overlap(fact.get("content", ""), user_message)
 
             if is_correction and overlap > 0.3:
-                # Regex-based correction — devalue trust
-                new_trust = max(0.0, fact.get("trust_score", 0.5) -
-                                self._trust.correction_penalty_value())
+                # Regex-based correction — devalue trust (same correction floor
+                # as the NLI dock: sibling paths inherit the bound, not the fix)
+                old = fact.get("trust_score", 0.5)
+                new_trust = max(min(old, self._trust.correction_floor_value()),
+                                old - self._trust.correction_penalty_value())
                 self._storage.update(fact_id, trust_score=new_trust)
                 self._trust.record_signal(fact_id, was_continuation=False, was_correction=True)
                 # Organic atrophy: evaluate the corrected fact against existing criteria
@@ -1186,17 +1434,19 @@ class LimbicMemoryProvider(MemoryProvider):
         that persists after the write.
 
         Two terminal conditions, either of which resolves the link:
-          - the correction landed: older fact's trust has fallen below the floor
+          - the correction landed: older fact's trust has reached the
+            correction floor (a floored fact resolves instead of spinning —
+            an un-resolvable clamp would eat the per-turn budget forever)
           - the correction is stale: NLI no longer agrees the pair contradicts
         One non-terminal case re-asserts the penalty: the older fact recovered
-        above the floor AND NLI still confirms the contradiction.
+        above the correction floor AND NLI still confirms the contradiction.
         """
         if not self._storage or not self._trust:
             return
 
         max_per_turn = int(self._trust.get("max_corrections_per_turn"))
         ttl_days = int(self._trust.get("correction_link_ttl_days"))
-        floor = self._trust.get("relevance_floor")
+        floor = self._trust.correction_floor_value()
 
         try:
             # Expire stale links first so the bounded query below spends its
@@ -1213,8 +1463,9 @@ class LimbicMemoryProvider(MemoryProvider):
                 older_id = link["older_fact_id"]
                 older_trust = link.get("older_trust", 0.5)
 
-                # Landed — the corrected fact has faded.
-                if older_trust < floor:
+                # Landed — the corrected fact has faded (the committed
+                # measured predicate: landed when trust <= correction_floor).
+                if older_trust <= floor:
                     self._storage.resolve_contradiction(link["newer_fact_id"], older_id)
                     resolved += 1
                     continue
@@ -1233,9 +1484,13 @@ class LimbicMemoryProvider(MemoryProvider):
                     continue
 
                 # Contradiction persists and the penalty has been outvoted —
-                # re-assert it. Bounded: one trust write per link.
+                # re-assert it. Bounded: one trust write per link. The floor
+                # applies here too: a persistent contradiction may pin a fact
+                # at the floor but never dock it below (same clamp as the
+                # write-path dock).
                 penalty = self._trust.correction_penalty_value()
-                new_trust = max(0.0, older_trust - penalty)
+                floor = self._trust.correction_floor_value()
+                new_trust = max(min(older_trust, floor), older_trust - penalty)
                 self._storage.update(older_id, trust_score=new_trust)
                 self._check_organic_atrophy(
                     older_id, new_trust,
@@ -1283,6 +1538,7 @@ class LimbicMemoryProvider(MemoryProvider):
             decayed = 0
             healed = 0
             marked = 0
+            unmarked = 0
             for row in rows:
                 old_trust = row.get("trust_score", 0.5)
                 last_retrieved = row.get("last_retrieved")
@@ -1326,6 +1582,20 @@ class LimbicMemoryProvider(MemoryProvider):
                 ):
                     self._storage.mark_atrophy(row["fact_id"])
                     marked += 1
+                elif (
+                    row.get("atrophy_marked_at")
+                    and not self._trust.is_atrophy_candidate(
+                        trust_score=new_trust,
+                        last_retrieved=last_retrieved,
+                        created_at=created_at,
+                    )
+                ):
+                    # C4: the sweep does not re-check trust, so a fact that
+                    # recovered above the threshold between mark and grace
+                    # must leave the reap cohort — otherwise the sweep would
+                    # delete a recovered fact.
+                    self._storage.unmark_atrophy(row["fact_id"])
+                    unmarked += 1
 
                 # Only write if the value actually changed (avoid unnecessary DB writes)
                 # Do NOT stamp last_retrieved here — decay is a metabolic process,
@@ -1341,8 +1611,9 @@ class LimbicMemoryProvider(MemoryProvider):
 
             if decayed:
                 logger.debug("limbic: applied temporal decay to %d facts (user=%s)", decayed, user_id)
-            if healed or marked:
-                logger.info("limbic: decay pass healed=%d newly_marked=%d (user=%s)", healed, marked, user_id)
+            if healed or marked or unmarked:
+                logger.info("limbic: decay pass healed=%d newly_marked=%d unmarked=%d (user=%s)",
+                            healed, marked, unmarked, user_id)
         except Exception as e:
             logger.debug("limbic: temporal decay failed: %s", e)
 
@@ -1350,22 +1621,34 @@ class LimbicMemoryProvider(MemoryProvider):
         """Sweep facts marked for atrophy whose grace period has elapsed.
 
         Runs every turn (via tick() → prefetch). Bounded by max_atrophy_per_turn.
-        Facts are marked during search when their effective trust decays below
-        threshold and their age exceeds the horizon. After a grace period,
-        they are physically deleted from the database.
+        Facts are marked during temporal decay (and at write time) when their
+        trust decays below the threshold. After a grace period they are
+        physically deleted from the database — except the C4 reap-guard cohort:
+        retrieval_count >= 5, unresolved contradiction links, and the
+        configured reap_guard_excludes (chain-collateral facts blessed for
+        retention) are never reaped here.
         """
         if not self._storage:
             return
         try:
             grace_days = self._trust.atrophy_grace_days()
             max_per_turn = self._trust.max_atrophy_per_turn()
+            excluded: set[int] = set()
+            for x in (self._config.get("reap_guard_excludes") or []):
+                try:
+                    excluded.add(int(x))
+                except (TypeError, ValueError):
+                    pass  # a malformed entry must not kill the sweep
 
             # Compute cutoff ISO: now - grace_days
             from datetime import datetime, timedelta, timezone
             cutoff = datetime.now(timezone.utc) - timedelta(days=grace_days)
             cutoff_iso = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-            deleted = self._storage.sweep_atrophy(cutoff_iso, limit=max_per_turn, user_id=user_id)
+            deleted = self._storage.sweep_atrophy(
+                cutoff_iso, limit=max_per_turn, user_id=user_id,
+                exclude_ids=excluded,
+            )
             if deleted:
                 self._atrophy_swept_count += deleted
                 logger.info("limbic: atrophied %d facts for user=%s", deleted, user_id)
@@ -1920,6 +2203,11 @@ class LimbicMemoryProvider(MemoryProvider):
                 "description": "Extra entity patterns as 'LABEL:pattern' strings, comma-separated (e.g. 'PERSON:Grace,ORG:Acme Corp'). Deployments configure; plugin default is empty.",
                 "default": "",
             },
+            {
+                "key": "entity_junk_words",
+                "description": "Extra junk words the entity filter should reject (comma-separated, e.g. 'wombat,project-slug'). EXTENDS the defaults (numbers/units/function words/number-words); defaults are never removable.",
+                "default": "",
+            },
         ]
 
     def save_config(self, values: dict[str, Any], hermes_home: str) -> None:
@@ -1946,6 +2234,8 @@ class LimbicMemoryProvider(MemoryProvider):
             config["known_users"] = [u.strip() for u in str(values["known_users"]).split(",") if u.strip()]
         if "known_entities" in values:
             config["known_entities"] = [e.strip() for e in str(values["known_entities"]).split(",") if e.strip()]
+        if "entity_junk_words" in values:
+            config["entity_junk_words"] = [w.strip() for w in str(values["entity_junk_words"]).split(",") if w.strip()]
         if "nlp_languages" in values:
             langs = [l.strip() for l in str(values["nlp_languages"]).split(",") if l.strip()]
             config["nlp"] = {"languages": langs}
