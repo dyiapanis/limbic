@@ -87,7 +87,7 @@ For each similar existing fact, the NLI cross-encoder (MiniLMv2-L6-mnli-xnli, 10
 
 **This runs at write time**, so it works in all session types — not just continuous gateway sessions. This closes the correction propagation gap that existed when correction detection was regex-only and read-time.
 
-**Why NLI, not embeddings or regex:** Embeddings capture topic, not stance — "I eat meat" and "I am vegan" have high cosine similarity because both are about diet. Regex catches explicit negation ("no", "wrong") but misses declarative state-changes ("The old engine is decommissioned", "The browser engine is Camofox now"). NLI (cross-encoder) processes both texts together and captures their interaction — it detects semantic contradiction regardless of linguistic form.
+**Why NLI, not embeddings or regex:** Embeddings capture topic, not stance — "I eat meat" and "I am vegan" have high cosine similarity because both are about diet. Regex catches explicit negation ("no", "wrong") but misses declarative state-changes ("The old engine is decommissioned", "The browser engine is rewritten now"). NLI (cross-encoder) processes both texts together and captures their interaction — it detects semantic contradiction regardless of linguistic form.
 
 The agent never sees fact IDs, payloads, or internal state. It said "remember this" and the system did.
 
@@ -432,6 +432,7 @@ nlp:
 context_budget: 20           # like pot size — ceiling on facts in awareness per turn
 fragment_gate_chars: 60      # conversational fragments are not durable facts
 fragment_gate_words: 3
+fragment_gate_flat_chars: 40 # sub-threshold utterances — durable markers escape
 
 # Adaptive parameters (decay half-life, relevance floor) live in
 # limbic_params.json — managed by the trust engine, not static knobs.

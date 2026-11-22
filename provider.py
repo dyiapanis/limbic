@@ -284,6 +284,74 @@ class LimbicMemoryProvider(MemoryProvider):
                 return True
         return False
 
+    # Fragment-gate C6 legs: anti-fact heuristics for the verbatim-speech
+    # classes (verbatim questions, quoted user speech, sub-threshold
+    # utterances) with a durable-marker escape (dates / known principals /
+    # watch-style intent requests). Precision-first: a false escape leaves a
+    # marginal fact stored where decay + the atrophy lane can retire it; a
+    # false rejection loses a durable fact silently.
+    # _CHAT_SPEECH_MAX bounds the question/quote legs: verbatim chat speech
+    # is short; longer question-tailed or quote-leading dumps are paragraph
+    # facts (splitter/atrophy lane), not the fragment gate's lane.
+    _CHAT_SPEECH_MAX = 240
+    _DURABLE_DATE_RE = re.compile(
+        r"\b(\d{4}-\d{1,2}-\d{1,2}"
+        r"|\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?"
+        r"|(?:19|20)\d{2}\b"
+        r"|\d{1,2}\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?"
+        r"|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?(,?\s*(?:19|20)\d{2})?"
+        r")",
+        re.IGNORECASE,
+    )
+    # Durable intents phrased as questions ("Should we watch Severance
+    # tonight?") escape the question leg; deictic objects ("use it") do not
+    # count as durable.
+    _REQUEST_INTENT_RE = re.compile(
+        r"\b(?:can|should|shall|could|will)\s+(?:we|i)\s+"
+        r"(?:watch|see|catch|stream|read|listen|try|buy|get|attend|book|check|use|install|plan|order)\b"
+        r"(?!\s+(?:it|this|that|them|those|here)\b)",
+        re.IGNORECASE,
+    )
+    # Raw quote-codepoints that mark content as quoted speech when they lead
+    # the string: straight, curly, single and double.
+    _QUOTE_OPENERS = "\"'\u201c\u201d\u2018\u2019"
+
+    def _make_principal_re(self):
+        """Known-principal name matcher from the identity manifest.
+
+        Manifest only — storage user_ids carry junk buckets ('6', 'general')
+        that must never act as a durable-entity escape. None in single-user
+        mode: without a name signal the flat band is skipped and the pair
+        gate stays the sole short-string rule.
+        """
+        manifest = getattr(self, "_manifest", None)
+        if manifest is None or not getattr(manifest, "user_count", 0):
+            return None
+        names = set()
+        for canon in manifest.canonical_names:
+            names.add(str(canon).title())
+            try:
+                ident = manifest.resolve_by_canonical(canon)
+            except Exception:
+                ident = None
+            if ident and getattr(ident, "display_name", None):
+                names.add(str(ident.display_name))
+        if not names:
+            return None
+        return re.compile(
+            r"\b(?:" + "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True)) + r")\b"
+        )
+
+    def _has_durable_marker(self, text: str) -> bool:
+        """Escape set for the fragment-gate legs: a concrete date, a known
+        principal, or a watch/intent request pattern (plan §C6)."""
+        if self._DURABLE_DATE_RE.search(text):
+            return True
+        principal = self._make_principal_re()
+        if principal and principal.search(text):
+            return True
+        return bool(self._REQUEST_INTENT_RE.search(text))
+
     def remember(self, content: str, user_id: str | None = None,
                  session_id: str | None = None) -> dict:
         """Store a fact. The hippocampus encodes experience into memory."""
@@ -322,26 +390,60 @@ class LimbicMemoryProvider(MemoryProvider):
         # L3 (plan 2026-10-24): host-frame junk gate — the gateway's own
         # session framing must never be stored as a fact. Mechanical: this is
         # OUR literal wrapper text, not a content classification.
+        # C5 golden-set adjudication (sprint C5 review): ephemeral background
+        # process / delegation dumps are host framing too — rejected BEFORE
+        # the splitter so they never become parent+children facts.
         for frame in ("[OUT-OF-BAND USER MESSAGE", "[CONTEXT COMPACTION",
-                      "delivered once at this position"):
+                      "delivered once at this position",
+                      "[IMPORTANT: Background process",
+                      "background process results arrived while this session was busy",
+                      "[Background process proc_",
+                      "[ASYNC DELEGATION BATCH COMPLETE"):
             if frame in content:
                 logger.info("limbic: rejected host-frame text (len=%d)", len(content))
                 return {"status": "rejected_host_frame",
                         "reason": "session framing text is not a fact"}
 
-        # ponytail: fragment gate — both conditions must fail to reject.
-        # words<3 catches the real junk (1-2 word steering/ack messages:
-        # "yes", "ok", "proceed", "shut up"); dense short facts
-        # ("Grace is vegan") pass and decay handles anything marginal.
-        # Thresholds tunable in limbic.yaml.
+        # Fragment gate (sprint C6 — the plan's 40-char threshold absorbed
+        # into this gate, not a parallel mechanism).
+        #   pair leg: len<chars AND words<words — 1-2 word acks ("yes", "ok").
+        #     Dense short facts ("Grace is vegan") carry a principal and pass.
+        #   question leg: a bare verbatim question is conversational, unless
+        #     it carries a durable marker (date / principal / watch intent).
+        #   flat leg: len<40 with no durable marker — sub-threshold chat
+        #     utterances that have too many words for the pair leg. Multi-user
+        #     manifests only; without entity names there is no reliable
+        #     escape, so the pair leg stays the sole short-string rule.
+        #   quoted-speech leg: content opening with a raw quote and no
+        #     durable marker (no provenance prefix) is quoted user speech.
+        # All legs return the same status; the class rides in the reason for
+        # the post-deploy rejection-log review.
         gate_chars = int(self._config.get("fragment_gate_chars", 60))
         gate_words = int(self._config.get("fragment_gate_words", 3))
+        gate_flat = int(self._config.get("fragment_gate_flat_chars", 40))
         stripped = content.strip()
         if len(stripped) < gate_chars and len(stripped.split()) < gate_words:
             logger.info("limbic: rejected fragment (len=%d, words=%d)",
                         len(stripped), len(stripped.split()))
             return {"status": "rejected_fragment",
                     "reason": f"Too short to be a durable fact (<{gate_chars} chars and <{gate_words} words)."}
+        if not self._has_durable_marker(stripped):
+            if (len(stripped) < self._CHAT_SPEECH_MAX
+                    and stripped.rstrip('"\'\u201d\u2019 ').endswith("?")):
+                logger.info("limbic: rejected fragment (len=%d, class=verbatim_question)",
+                            len(stripped))
+                return {"status": "rejected_fragment",
+                        "reason": "Verbatim question is conversational, not a durable fact."}
+            if len(stripped) < gate_flat and self._make_principal_re() is not None:
+                logger.info("limbic: rejected fragment (len=%d, words=%d, class=subthreshold)",
+                            len(stripped), len(stripped.split()))
+                return {"status": "rejected_fragment",
+                        "reason": f"Sub-threshold utterance with no durable marker (<{gate_flat} chars)."}
+            if len(stripped) < self._CHAT_SPEECH_MAX and stripped and stripped[0] in self._QUOTE_OPENERS:
+                logger.info("limbic: rejected fragment (len=%d, class=quoted_speech)",
+                            len(stripped))
+                return {"status": "rejected_fragment",
+                        "reason": "Quoted speech without provenance is conversational, not a durable fact."}
 
         # Guardian case: detect if the fact is about another user
         # "Bob is interested in Harry Potter" → user_id=bob, not grace
