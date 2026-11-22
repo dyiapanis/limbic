@@ -3,7 +3,7 @@
 
 A fact longer than ~700 chars is one vector to the embedder: every section
 averages into it and recall lands in the weak 0.3–0.4 cosine band (audit
-2026-11-20: 43–51% of facts >600 chars, 98 >1,100 on phoenix). When content
+2026-11-20: 43–51% of facts >600 chars, 98 >1,100 on one store). When content
 carries DETECTED structure — numbered/bulleted list items, markdown headers,
 or multiple substantive paragraphs — remember() splits it into child facts.
 A single narrative (one block of prose, no markers) stays whole: ambiguous

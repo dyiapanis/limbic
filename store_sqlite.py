@@ -647,7 +647,7 @@ class SQLiteStorage(LimbicStorage):
                 # parent, siblings, links — back together via _write_txn.
                 self._db.execute(
                     "INSERT INTO vec_index(rowid, embedding) VALUES (?, ?)",
-                    (child_id, ch["embedding"]),
+                    (child_id, _serialize_vec(ch["embedding"])),
                 )
                 for older_id in ch.get("contradictions", []):
                     self._db.execute(
