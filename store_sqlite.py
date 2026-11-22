@@ -22,6 +22,7 @@ except ImportError:  # pragma: no cover
 import json
 import logging
 import os
+import re
 import sqlite3
 import struct
 import threading
@@ -123,6 +124,24 @@ _UPDATABLE_COLUMNS = frozenset({
     "last_retrieved", "matured_at", "atrophy_marked_at", "created_at",
     "updated_at",
 })
+
+
+# User-scope boundary (sprint C8): ids that already name a room or an opaque
+# platform id, never a principal — Matrix internal room ids ("!x:y") and any
+# pure-alphanumeric id ≥18 chars (room-id length convention; Mattermost user
+# ids run 26). As facts.user_id they are wrong-principal scope: recall
+# resolves principals, so the facts are unreachable storage. Principal keys
+# and MXIDs ("@…") are shorter or @"-prefixed, so they never trip this —
+# including "general", "6", "uid:1000" (other malformed classes, handled by
+# manifest re-attribution, not this net).
+_ROOM_USER_ID_RE = re.compile(r"[A-Za-z0-9]{18,}")
+
+
+def room_shaped_user_id(user_id) -> bool:
+    """True for a Matrix room id / opaque platform id — can never own a fact."""
+    if not isinstance(user_id, str) or not user_id:
+        return False
+    return user_id.startswith("!") or bool(_ROOM_USER_ID_RE.fullmatch(user_id))
 
 
 def _now_iso() -> str:
@@ -567,6 +586,10 @@ class SQLiteStorage(LimbicStorage):
 
     def store(self, content: str, user_id: str, embedding: list[float],
               metadata: dict) -> int:
+        if room_shaped_user_id(user_id):
+            raise ValueError(
+                f"user-scope boundary: room-shaped user_id {user_id!r} "
+                "cannot own facts (wrong-principal scope)")
         now_iso = _now_iso()
         params = (
             content,
@@ -618,6 +641,10 @@ class SQLiteStorage(LimbicStorage):
         similarity scans already ran and excluded each other (provider side);
         what arrives here is only the pre-decided write.
         """
+        if room_shaped_user_id(user_id):
+            raise ValueError(
+                f"user-scope boundary: room-shaped user_id {user_id!r} "
+                "cannot own facts (wrong-principal scope)")
         now_iso = _now_iso()
 
         def _txn():
