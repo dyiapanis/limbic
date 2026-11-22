@@ -187,7 +187,8 @@ def test_cli_quality_end_to_end(tmp_path, capsys, monkeypatch):
               "--backup-dir", str(tmp_path / "bk"), "-o", str(out)])
     parsed = json.loads(out.read_text())
     assert parsed["profile"] == "beta" and parsed["facts_total"] == 5
-    assert parsed["backup"]["path"].startswith(str(tmp_path / "bk") + "/beta-limbic-")
+    bpath = Path(parsed["backup"]["path"])
+    assert bpath.parent == tmp_path / "bk" and bpath.name.startswith("beta-limbic-")
     # store path is derived from --hermes-home when --db is absent
     assert parsed["store"] == str(db)
     captured = capsys.readouterr().out
