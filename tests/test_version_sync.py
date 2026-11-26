@@ -20,8 +20,11 @@ def test_version_sync():
     assert re.fullmatch(r"\d+\.\d+\.\d+", version), (
         f"plugin.yaml version not X.Y.Z (no v prefix): {version}"
     )
-    assert f"**Version {version}**" in (ROOT / "README.md").read_text(), (
-        f"README banner stale (plugin.yaml is {version})"
+    # README carries no version line by design (Demetri, 2026-11-26):
+    # license/author/version live in LICENSE + repo metadata; restating
+    # them in the README only creates drift surface.
+    assert f"**Version {version}**" not in (ROOT / "README.md").read_text(), (
+        "README must not restate the version (drift doctrine)"
     )
     spec = (ROOT / "SPEC.md").read_text()
     assert f"**Version {version}**" in spec, (
