@@ -1,11 +1,8 @@
 ![LIMBIC — Self-Organising Memory for AI Agents](assets/banner.png)
 
-Self-Organising Memory for AI Agents
+Limbic is a self-organising memory plugin for Hermes Agents.
 
-**Version 0.9.6**
-Author: D Yiapanis · License: MIT
-
-Limbic is a self-organising local memory system for AI agents. It stores facts, learns which ones matter through interaction, and surfaces the right context at the right time — without ever calling an LLM. Designed for [Hermes Agent](https://hermes-agent.nousresearch.com) and implements the upstream `MemoryProvider` ABC.
+It stores facts, learns which ones matter through interaction, and surfaces the right context at the right time — without ever calling an LLM.
 
 ---
 
@@ -16,7 +13,7 @@ Limbic is inspired by the brain's limbic system:
 - **Hippocampus** (encoding) — `remember()` embeds, checks interference, and stores
 - **Amygdala** (salience) — trust scoring, self-tunes from use
 - **Thalamus** (retrieval) — `recall()` searches and gates by relevance
-- Atrophy — memories superseded, contradicted and unused fade and are progressively forgotten.
+- **Atrophy** — memories superseded, contradicted and unused fade and are progressively forgotten.
 
 The agent sees three tools (`remember`, `recall`, `forget`). The operator sees one file (`limbic.db`). Everything inside is self-organising.
 
