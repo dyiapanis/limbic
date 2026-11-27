@@ -1,20 +1,16 @@
 ![LIMBIC — Self-Organising Memory for AI Agents](assets/banner.png)
 
-<p align="center"><strong>Limbic</strong><br>Self-organising, adaptive memory for Hermes Agents</p>
+<h2 align="center">Limbic</h2>
+
+<p align="center"><strong>Self-organising, adaptive memory for Hermes Agents</strong></p>
 
 <p align="center">
-[![tests](https://github.com/dyiapanis/limbic/actions/workflows/tests.yml/badge.svg)](https://github.com/dyiapanis/limbic/actions/workflows/tests.yml)
-[![license](https://img.shields.io/github/license/dyiapanis/limbic)](https://github.com/dyiapanis/limbic/blob/main/LICENSE)
-[![python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
-[![platforms](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20Windows-informational)](https://github.com/dyiapanis/limbic/actions/workflows/tests.yml)
-[![hermes](https://img.shields.io/badge/hermes-plugin%20marketplace-8A2BE2)](https://hermes-agent.nousresearch.com/marketplace/limbic)
+  <a href="https://github.com/dyiapanis/limbic/actions/workflows/tests.yml"><img src="https://github.com/dyiapanis/limbic/actions/workflows/tests.yml/badge.svg" alt="tests" valign="middle"></a>&nbsp;
+  <a href="https://github.com/dyiapanis/limbic/blob/main/LICENSE"><img src="https://img.shields.io/github/license/dyiapanis/limbic" alt="license" valign="middle"></a>&nbsp;
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="python" valign="middle"></a>&nbsp;
+  <a href="https://github.com/dyiapanis/limbic/actions/workflows/tests.yml"><img src="https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20Windows-informational" alt="platforms" valign="middle"></a>&nbsp;
+  <a href="https://hermes-agent.nousresearch.com/marketplace/limbic"><img src="https://img.shields.io/badge/hermes-plugin%20marketplace-8A2BE2" alt="hermes" valign="middle"></a>
 </p>
-
-[![tests](https://github.com/dyiapanis/limbic/actions/workflows/tests.yml/badge.svg)](https://github.com/dyiapanis/limbic/actions/workflows/tests.yml)
-[![license](https://img.shields.io/github/license/dyiapanis/limbic)](https://github.com/dyiapanis/limbic/blob/main/LICENSE)
-[![python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
-[![platforms](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20Windows-informational)](https://github.com/dyiapanis/limbic/actions/workflows/tests.yml)
-[![hermes](https://img.shields.io/badge/hermes-plugin%20marketplace-8A2BE2)](https://hermes-agent.nousresearch.com/marketplace/limbic)
 
 ---
 
