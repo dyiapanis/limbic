@@ -136,8 +136,9 @@ def test_config_schema_matches_implementation(provider):
     assert "embedding_provider" not in schema_keys
     assert "embedding_model" not in schema_keys
     assert "memory_horizon" not in schema_keys
-    dims_field = [f for f in provider.get_config_schema() if f["key"] == "embedding_dims"][0]
-    assert dims_field["default"] == 1024
+    # storage/embedder are fixed by design — never advertised as options
+    assert "embedding_dims" not in schema_keys
+    assert "db_path" not in schema_keys
 
 
 def test_known_entities_from_config(provider):
