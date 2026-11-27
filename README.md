@@ -4,6 +4,12 @@ Limbic is a self-organising memory plugin for Hermes Agents.
 
 It stores facts, learns which ones matter through interaction, and surfaces the right context at the right time — without ever calling an LLM.
 
+[![tests](https://github.com/dyiapanis/limbic/actions/workflows/tests.yml/badge.svg)](https://github.com/dyiapanis/limbic/actions/workflows/tests.yml)
+[![license](https://img.shields.io/github/license/dyiapanis/limbic)](https://github.com/dyiapanis/limbic/blob/main/LICENSE)
+[![python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
+[![platforms](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20Windows-informational)](https://github.com/dyiapanis/limbic/actions/workflows/tests.yml)
+[![hermes](https://img.shields.io/badge/hermes-plugin%20marketplace-8A2BE2)](https://hermes-agent.nousresearch.com/marketplace/limbic)
+
 ---
 
 ## How It Works
