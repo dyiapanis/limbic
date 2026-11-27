@@ -86,30 +86,6 @@ languages: [en] #language support, separate by comma
 facts_per_turn: 20 #max facts surfaced per turn
 ```
 
-Operating points (defaults below; the engine adapts within them — tune via
-`limbic_params.json`, which overrides these on next start):
-
-```json
-{"correction_floor": 0.30, "relevance_floor": 0.25,
- "recall_confidence_floor": 0.50, "atrophy_threshold": 0.05,
- "atrophy_grace_days": 7}
-```
-
-Corrections never dock a fact's trust below the floor; recall abstains when
-nothing is confident enough (silent beats wrong); fade-out marks at the
-atrophy threshold and reaps after the grace window — a reap needs sustained
-disuse (recall count ≥ 5 or no contradiction link), so one stray recall
-still saves a memory.
-
-Adaptive parameters (decay half-life, relevance floor) are not static knobs — the trust engine tunes them in `limbic_params.json`.
-
-If recall is poor, adjust in this order:
-
-- Too much noise in context? Lower `facts_per_turn` (fewer facts surfaced per turn)
-- Facts fading too fast? Decay half-life is adaptive: it lengthens for facts that keep being retrieved — steady recall traffic on the important facts keeps them alive
-- System not learning? Feed it more experiences — write volume is the input the adaptivity learns from
-- Wrong content surfacing? Check `stats`/`status` for stale embeddings or an atrophy backlog; reindex if the embedder stamp is stale
-
 **When a plugin upgrade changes the bundled embedder, reindexing is
 required.** Limbic ships its embedding model, and the store records which
 embedder produced its vectors (the embedder stamp). If an upgrade ships a
