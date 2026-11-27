@@ -2174,22 +2174,12 @@ class LimbicMemoryProvider(MemoryProvider):
     def get_config_schema(self) -> list[dict[str, Any]]:
         """Return config fields for `hermes memory setup`.
 
-        HONEST CONTRACT: embedding provider/model are NOT configurable —
-        the bundled Arctic Embed 2.0 L ONNX model is the only embedder
-        (embeddings.py: create_embedder has no endpoint option). Advertise
-        only what the code actually reads.
+        HONEST CONTRACT: storage/embedding are fixed by design (sqlite,
+        bundled Arctic Embed 2.0 L at 1024 dims) — not advertised as options.
+        Schema matches the README config block plus deployer knobs
+        (known_users/known_entities/entity_junk_words).
         """
         return [
-            {
-                "key": "db_path",
-                "description": "Path to SQLite database file (supports $HERMES_HOME). Leave default for auto.",
-                "default": "$HERMES_HOME/limbic.db",
-            },
-            {
-                "key": "embedding_dims",
-                "description": "Embedding dimensionality. Must match the bundled model (1024).",
-                "default": 1024,
-            },
             {
                 "key": "facts_per_turn",
                 "description": "Max memories surfaced per turn (ceiling, not target).",
