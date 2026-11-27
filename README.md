@@ -86,18 +86,6 @@ languages: [en] #language support, separate by comma
 facts_per_turn: 20 #max facts surfaced per turn
 ```
 
-**When a plugin upgrade changes the bundled embedder, reindexing is
-required.** Limbic ships its embedding model, and the store records which
-embedder produced its vectors (the embedder stamp). If an upgrade ships a
-different bundled model, `status` and `stats` report `stale_embedder: true`,
-retrieval quality is degraded, and one command realigns the store (run on the
-host where Hermes is installed — the script imports Hermes core):
-
-```bash
-python3 ~/.hermes/plugins/limbic/reindex.py --agent <profile-name>
-python3 ~/.hermes/plugins/limbic/reindex.py --all          # every profile
-```
-
 ---
 
 ## Multi-User Mode
@@ -195,6 +183,18 @@ by intent:
   to the query. The fade is still gradual — trust dynamics and maturation
   (~a week at the default curve) — but the correction wins from the day
   it is stored, not after the week.
+
+**When a plugin upgrade changes the bundled embedder, reindexing is
+required.** Limbic ships its embedding model, and the store records which
+embedder produced its vectors (the embedder stamp). If an upgrade ships a
+different bundled model, `status` and `stats` report `stale_embedder: true`,
+retrieval quality is degraded, and one command realigns the store (run on the
+host where Hermes is installed — the script imports Hermes core):
+
+```bash
+python3 ~/.hermes/plugins/limbic/reindex.py --agent <profile-name>
+python3 ~/.hermes/plugins/limbic/reindex.py --all          # every profile
+```
 
 ---
 
