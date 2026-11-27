@@ -1,8 +1,14 @@
 ![LIMBIC — Self-Organising Memory for AI Agents](assets/banner.png)
 
-Limbic is a self-organising memory plugin for Hermes Agents.
+<p align="center"><strong>Limbic</strong><br>Self-organising, adaptive memory for Hermes Agents</p>
 
-It stores facts, learns which ones matter through interaction, and surfaces the right context at the right time — without ever calling an LLM.
+<p align="center">
+[![tests](https://github.com/dyiapanis/limbic/actions/workflows/tests.yml/badge.svg)](https://github.com/dyiapanis/limbic/actions/workflows/tests.yml)
+[![license](https://img.shields.io/github/license/dyiapanis/limbic)](https://github.com/dyiapanis/limbic/blob/main/LICENSE)
+[![python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
+[![platforms](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20Windows-informational)](https://github.com/dyiapanis/limbic/actions/workflows/tests.yml)
+[![hermes](https://img.shields.io/badge/hermes-plugin%20marketplace-8A2BE2)](https://hermes-agent.nousresearch.com/marketplace/limbic)
+</p>
 
 [![tests](https://github.com/dyiapanis/limbic/actions/workflows/tests.yml/badge.svg)](https://github.com/dyiapanis/limbic/actions/workflows/tests.yml)
 [![license](https://img.shields.io/github/license/dyiapanis/limbic)](https://github.com/dyiapanis/limbic/blob/main/LICENSE)
