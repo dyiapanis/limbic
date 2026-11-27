@@ -203,12 +203,6 @@ python3 ~/.hermes/plugins/limbic/reindex.py --all          # every profile
 
 ---
 
-## License
-
-MIT. Free to use, modify, and distribute — including commercially — with attribution.
-
----
-
 ## Architecture
 
 See [SPEC.md](./SPEC.md) for the full architecture — data model, lifecycle mechanisms, trust adaptation, retrieval pipeline, atrophy, and roadmap. See [FAQ.md](./FAQ.md) for common follow-up questions.
