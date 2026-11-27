@@ -1,6 +1,10 @@
 """Limbic identity — user manifest resolution from users.yaml.
 
 users.yaml is a Limbic CONFIG FILE: user data that resides in Limbic.
+Single-config doctrine (2026-11-27): the primary source is now an inline
+``users:`` block in limbic.yaml — one config file per deployment. The
+users.yaml file layer remains as fallback for existing deployments
+(config wins over files).
 Default slot is the plugin directory itself (plugins/limbic/users.yaml —
 fleet-shared, gitignored; users.yaml.example ships in its place). The
 limbic.yaml ``users_manifest`` key overrides the path, and a
@@ -135,13 +139,26 @@ class UserManifest:
         )
 
 
-def load_manifest(config: dict, hermes_home: str = "") -> Optional[UserManifest]:
-    """Find and load users.yaml; None (single-user mode) if not found.
+def load_manifest(config: dict, hermes_home: str = "") -> Optional["UserManifest"]:
+    """Resolve the user manifest; None (single-user mode) if not found.
 
-    Plugins are self-contained: the default slot is this plugin's own
-    directory; per-profile and explicit config overrides layer on top.
+    Single-config doctrine: an inline ``users:`` block in limbic.yaml is the
+    primary source. File candidates remain as fallback so existing
+    deployments keep working (config wins over files).
+
+    File layering (when no inline block):
+    1. limbic.yaml ``users_manifest`` (explicit override)
+    2. ``$HERMES_HOME/users.yaml`` (per-profile override, like limbic.yaml)
+    3. ``<plugin dir>/users.yaml`` (default — the file lives in Limbic)
     """
     here = os.path.dirname(os.path.abspath(__file__))
+    cfg_users = (config or {}).get("users") or {}
+    if isinstance(cfg_users, dict) and cfg_users:
+        logger.info(
+            "limbic: user manifest loaded from limbic.yaml users: block — "
+            "multi-user mode, %d users", len(cfg_users))
+        return UserManifest("limbic.yaml:users", cfg_users)
+
     candidates: list[str] = []
     cfg_path = (config or {}).get("users_manifest", "")
     if cfg_path:

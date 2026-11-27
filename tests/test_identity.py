@@ -109,6 +109,34 @@ def test_load_manifest_plugin_dir_default(tmp_path, monkeypatch):
     assert m is not None and m.user_count == 2
 
 
+def test_load_manifest_inline_config_block():
+    # Single-config doctrine: users: block in limbic.yaml is the primary source.
+    m = load_manifest({
+        "users": {
+            "grace": {"display_name": "Grace", "scope": "adult",
+                      "platform_ids": {"matrix": "@grace:hs.org"}},
+            "bob": {"display_name": "Bob", "scope": "child",
+                    "guardians": ["grace"],
+                    "platform_ids": {"matrix": "@bob:hs.org"}},
+        },
+    })
+    assert m is not None and m.user_count == 2
+    a = m.resolve("@grace:hs.org", "matrix")
+    assert a and a.canonical == "grace" and a.scope == "adult"
+    b = m.resolve("@bob:hs.org", "matrix")
+    assert b and b.canonical == "bob" and b.guardians == ["grace"]
+
+
+def test_load_manifest_config_block_wins_over_files(tmp_path, monkeypatch):
+    import limbic.identity as ident
+    plugin_dir = tmp_path / "plugin"
+    plugin_dir.mkdir()
+    (plugin_dir / "users.yaml").write_text(YAML)  # file would give 2 users
+    monkeypatch.setattr(ident, "__file__", str(plugin_dir / "identity.py"))
+    m = load_manifest({"users": {"carol": {"display_name": "Carol"}}})
+    assert m.user_count == 1  # config block wins over any users.yaml file
+
+
 def test_load_manifest_hermes_home_overrides_plugin_dir(tmp_path, monkeypatch):
     import yaml as _y
     plugin_dir = tmp_path / "plugin"
