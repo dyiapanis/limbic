@@ -143,6 +143,16 @@ def test_no_link_original_ordering():
     assert [f["fact_id"] for f in out] == [1, 2]
 
 
+def test_facts_per_turn_canonical_and_legacy():
+    # Canonical key renames context_budget -> facts_per_turn; legacy reads.
+    facts = [_fact(1, 0.7, trust=1.0), _fact(2, 0.7, trust=0.5), _fact(3, 0.7, trust=0.5)]
+    storage = _FakeStorage(facts, supers={})
+    canonical = _mk_provider({"facts_per_turn": 2}, storage)
+    assert len(canonical._search("q", "u1", limit=2)) == 2
+    legacy = _mk_provider({"context_budget": 2}, storage)
+    assert len(legacy._search("q", "u1", limit=2)) == 2
+
+
 def test_chain_keeps_latest():
     # a→b→c with all three gated: only the latest survives.
     facts = [_fact(1, 0.7), _fact(2, 0.7), _fact(3, 0.7)]

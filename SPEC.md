@@ -129,7 +129,7 @@ Each path catches what the others miss. Results are fused via Reciprocal Rank Fu
 
 - **Over-fetch** — search requests `limit * 5` results so the activation gate has a larger pool to filter. Without this, a crowd of recent silent facts can dominate the top-K and starve recall of active facts.
 - **Relevance floor** — facts below a composite score threshold don't inject. The floor adapts: if injected facts lead to corrections or topic changes, the floor rises. If continuation rate is high but context is sparse, the floor lowers.
-- **`context_budget` is a ceiling, not a target.** Some turns produce 3 facts. Some produce 1. Some produce 0.
+- **`facts_per_turn` is a ceiling, not a target.** Some turns produce 3 facts. Some produce 1. Some produce 0.
 - **Silent-facts fallback** — if no active facts pass the relevance gate, high-relevance silent facts (activation < 0.5 but embedding score >= floor) are returned as fallback so recall isn't empty when all matching facts are still maturing.
 - What surfaces is the system's best guess at what's relevant, ranked by signals the agent never sees
 
@@ -431,13 +431,13 @@ embedding:
 nli:
   model: MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli
 
-# Entity extraction — spaCy models per language
-nlp:
-  languages: [en]
+# Entity extraction — language models per language
+# canonical: languages (legacy: nlp.languages still honoured on read)
+languages: [en]
 entity_junk_words: []        # extra tokens the entity filter rejects (extends the defaults)
 
 # Environmental conditions — system adapts within these bounds
-context_budget: 20           # like pot size — ceiling on facts in awareness per turn
+facts_per_turn: 20           # like pot size — ceiling on facts in awareness per turn (legacy: context_budget)
 fragment_gate_chars: 60      # conversational fragments are not durable facts
 fragment_gate_words: 3
 fragment_gate_flat_chars: 40 # sub-threshold utterances — durable markers escape
@@ -447,7 +447,7 @@ fragment_gate_flat_chars: 40 # sub-threshold utterances — durable markers esca
 ```
 
 If recall is poor, you change the environment:
-- Too much noise? Reduce `context_budget` (smaller pot)
+- Too much noise? Reduce `facts_per_turn` (smaller pot)
 - Facts fading too fast? The decay half-life is adaptive — feed the system steady retrieval traffic on the facts that matter
 - System not learning? Feed it more experiences (more water)
 
@@ -742,7 +742,7 @@ CREATE TABLE IF NOT EXISTS contradictions (
 );
 ```
 
-Entity extraction runs on every `remember()` call via spaCy NER. Language pipelines are config-driven (`nlp.languages`, default English). The English pipeline (`en_core_web_sm`) ships vendored inside the plugin at `models/en_core_web_sm/` and is loaded straight from that directory — no install step, no download, works offline on a fresh install. Other languages are not bundled: `hermes limbic languages --set <langs>` installs them into the dependency environment, and `status` reports `entity_extraction` with the pipelines actually loaded when a configured language's model is absent. A custom EntityRuler adds deterministic patterns for known entities (user names, project names, products) that statistical NER misses. Graph traversal in `search_graph()` finds all fact_ids linked to query-extracted entities, merged into the retrieval candidate pool alongside vector and FTS5 results.
+Entity extraction runs on every `remember()` call via spaCy NER. Language pipelines are config-driven (`languages`, default English; legacy `nlp.languages` still honoured). The English pipeline (`en_core_web_sm`) ships vendored inside the plugin at `models/en_core_web_sm/` and is loaded straight from that directory — no install step, no download, works offline on a fresh install. Other languages are not bundled: `hermes limbic languages --set <langs>` installs them into the dependency environment, and `status` reports `entity_extraction` with the pipelines actually loaded when a configured language's model is absent. A custom EntityRuler adds deterministic patterns for known entities (user names, project names, products) that statistical NER misses. Graph traversal in `search_graph()` finds all fact_ids linked to query-extracted entities, merged into the retrieval candidate pool alongside vector and FTS5 results.
 
 Adaptive parameters stored as a local JSON file alongside the database (`limbic_params.json`):
 
@@ -964,10 +964,10 @@ STEP 4: Gating — relevance floor + top-confidence guard
 
   # Fallback: if no active facts passed the gate, use high-relevance silent facts
   if not gated and silent_facts:
-    return silent_facts[:context_budget]
+    return silent_facts[:facts_per_turn]
 
   gated.sort(key=composite, reverse=True)
-  injected = gated[:context_budget]
+  injected = gated[:facts_per_turn]
 
 STEP 5: Update retrieval metadata
   for fact in injected:
