@@ -97,17 +97,13 @@ facts_per_turn: 20 #max facts surfaced per turn
 
 Without the manifest the same isolation still happens: every platform account that talks to the agent gets its own bucket, keyed by their full platform ID (`@grace:hs1` ≠ `@grace42:evil.org`; a single user simply sees one bucket). Adding the manifest later is purely additive — buckets resolve per `user_id`, never per configuration edit.
 
-Enable multi-user mode by copying the shipped example next to the plugin code
-(or set `users_manifest:` in `limbic.yaml` to any path):
-
-```bash
-cp ~/.hermes/plugins/limbic/users.yaml.example \
-   ~/.hermes/plugins/limbic/users.yaml
-```
+Enable multi-user mode in `limbic.yaml` with an inline `users:` block — one
+config file per deployment (identity only; limbic reads `display_name`,
+`scope`, `platform_ids`, `guardians`; roles are ignored here, see
+access-control):
 
 ```yaml
-# users.yaml — identity only; limbic reads display_name, scope,
-# platform_ids, guardians. Roles are ignored here (see access-control).
+# limbic.yaml
 users:
   grace:
     display_name: Grace
@@ -122,6 +118,15 @@ users:
     guardians: [grace]
     platform_ids:
       matrix: "@bob:example.org"
+```
+
+Alternatively, copy the shipped example next to the plugin code (or set
+`users_manifest:` in `limbic.yaml` to any path) — the file layer remains
+honoured for existing deployments, with the inline block taking precedence:
+
+```bash
+cp ~/.hermes/plugins/limbic/users.yaml.example \
+   ~/.hermes/plugins/limbic/users.yaml
 ```
 
 Nouns defined:
