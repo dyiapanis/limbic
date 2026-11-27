@@ -71,7 +71,7 @@ hermes limbic languages --set it     # saves + auto-downloads with progress
 hermes limbic languages --set en,it  # multiple — lowest common set for multi-user
 ```
 
-When no model is present, `status` shows `entity_extraction: disabled` and memory still works; the next `remember()` will prompt `Downloading models…` in chat. Single config `nlp.languages` covers all users in the profile.
+When no model is present, `status` shows `entity_extraction: disabled` and memory still works; the next `remember()` will prompt `Downloading models…` in chat. Single config `languages` covers all users in the profile.
 
 Config file `limbic.yaml` is optional (defaults in [Configuration](#configuration)).
 
@@ -82,20 +82,8 @@ Config file `limbic.yaml` is optional (defaults in [Configuration](#configuratio
 Each profile has a `limbic.yaml` that sets environmental bounds. The system adapts within these limits:
 
 ```yaml
-storage:
-  provider: sqlite
-
-embedding:
-  provider: local              # bundled ONNX model — no endpoint, no external server
-  model: Snowflake/snowflake-arctic-embed-l-v2.0   # bundled — leave as shipped; upgrades handle model changes via the embedder stamp
-  dims: 1024                   # bundled — matches the shipped model; do not change
-
-nlp:
-  languages: [en]               # spaCy models for entity extraction (en, fr, el, …)
-
-context_budget: 20              # ceiling on facts surfaced per turn
-fragment_gate_chars: 60         # remember() rejects content below BOTH fragment gates
-fragment_gate_words: 3
+languages: [en] #language support, separate by comma
+facts_per_turn: 20 #max facts surfaced per turn
 ```
 
 Operating points (defaults below; the engine adapts within them — tune via
@@ -117,7 +105,7 @@ Adaptive parameters (decay half-life, relevance floor) are not static knobs — 
 
 If recall is poor, adjust in this order:
 
-- Too much noise in context? Lower `context_budget` (fewer facts surfaced per turn)
+- Too much noise in context? Lower `facts_per_turn` (fewer facts surfaced per turn)
 - Facts fading too fast? Decay half-life is adaptive: it lengthens for facts that keep being retrieved — steady recall traffic on the important facts keeps them alive
 - System not learning? Feed it more experiences — write volume is the input the adaptivity learns from
 - Wrong content surfacing? Check `stats`/`status` for stale embeddings or an atrophy backlog; reindex if the embedder stamp is stale

@@ -161,8 +161,11 @@ class LimbicMemoryProvider(MemoryProvider):
         if not self._entity_extractor:
             try:
                 from .entities import EntityExtractor
-                nlp_config = self._config.get("nlp", {})
-                languages = nlp_config.get("languages", ["en"])
+                languages = (
+                    self._config.get("languages")
+                    or self._config.get("nlp", {}).get("languages")
+                    or ["en"]
+                )  # canonical: languages (legacy: nlp.languages)
                 # known_entities: "LABEL:pattern" strings from limbic.yaml
                 patterns = []
                 for entry in self._config.get("known_entities", []) or []:
@@ -1182,11 +1185,15 @@ class LimbicMemoryProvider(MemoryProvider):
         # so recall isn't empty when all matching facts are still in the maturation period.
         if not gated and silent_facts:
             silent_facts.sort(key=lambda f: f["composite_score"], reverse=True)
-            budget = self._config.get("context_budget", 20)
+            budget = self._config.get(
+                "facts_per_turn", self._config.get("context_budget", 20)
+            )
             return silent_facts[:budget]
 
-        # Sort by composite, take top context_budget
-        budget = self._config.get("context_budget", 20)
+        # Sort by composite, take top facts_per_turn
+        budget = self._config.get(
+            "facts_per_turn", self._config.get("context_budget", 20)
+        )
         gated.sort(key=lambda f: f["composite_score"], reverse=True)
 
         # Supersession (#19): when both sides of an OPEN contradiction clear
@@ -2184,13 +2191,13 @@ class LimbicMemoryProvider(MemoryProvider):
                 "default": 1024,
             },
             {
-                "key": "context_budget",
-                "description": "Max facts injected per turn (ceiling, not target).",
+                "key": "facts_per_turn",
+                "description": "Max memories surfaced per turn (ceiling, not target).",
                 "default": 20,
             },
             {
-                "key": "nlp_languages",
-                "description": "spaCy language models for entity extraction (comma-separated, e.g. en,fr).",
+                "key": "languages",
+                "description": "Language models for entity extraction (comma-separated, e.g. en,fr).",
                 "default": "en",
             },
             {
@@ -2228,17 +2235,22 @@ class LimbicMemoryProvider(MemoryProvider):
                 config["embedding"]["model"] = values["embedding_model"]
             if "embedding_dims" in values:
                 config["embedding"]["dims"] = values["embedding_dims"]
-        if "context_budget" in values:
-            config["context_budget"] = values["context_budget"]
+        if "facts_per_turn" in values:
+            config["facts_per_turn"] = values["facts_per_turn"]
+        elif "context_budget" in values:  # legacy flat key
+            config["facts_per_turn"] = values["context_budget"]
         if "known_users" in values:
             config["known_users"] = [u.strip() for u in str(values["known_users"]).split(",") if u.strip()]
         if "known_entities" in values:
             config["known_entities"] = [e.strip() for e in str(values["known_entities"]).split(",") if e.strip()]
         if "entity_junk_words" in values:
             config["entity_junk_words"] = [w.strip() for w in str(values["entity_junk_words"]).split(",") if w.strip()]
-        if "nlp_languages" in values:
+        if "languages" in values:
+            langs = [l.strip() for l in str(values["languages"]).split(",") if l.strip()]
+            config["languages"] = langs
+        elif "nlp_languages" in values:  # legacy flat key
             langs = [l.strip() for l in str(values["nlp_languages"]).split(",") if l.strip()]
-            config["nlp"] = {"languages": langs}
+            config["languages"] = langs
 
         # Merge with existing config so we don't clobber untouched fields
         if os.path.exists(config_path):

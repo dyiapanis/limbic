@@ -338,7 +338,9 @@ def cmd_status(args):
         "collection": getattr(storage, "_collection", "unknown"),
         "total_facts": storage.count() if storage else 0,
         "embedding": config.get("embedding", {}),
-        "context_budget": config.get("context_budget", 20),
+        "facts_per_turn": config.get(
+            "facts_per_turn", config.get("context_budget", 20)
+        ),
         "entity_extraction": {
             "enabled": bool(provider._entity_extractor and provider._entity_extractor.available),
             "languages": getattr(provider._entity_extractor, "_languages", None),
@@ -361,7 +363,11 @@ def cmd_languages(args):
                 import yaml
                 with open(config_path) as f:
                     cfg = yaml.safe_load(f) or {}
-                return cfg.get("nlp", {}).get("languages", ["en"])
+                return (
+                    cfg.get("languages")
+                    or cfg.get("nlp", {}).get("languages")
+                    or ["en"]
+                )  # canonical: languages (legacy: nlp.languages)
             except Exception:
                 pass
         return ["en"]  # plugin default
@@ -374,8 +380,8 @@ def cmd_languages(args):
             print(f"Available: {', '.join(sorted(EntityExtractor.MODEL_MAP))}")
             sys.exit(1)
         provider = _get_provider()
-        provider.save_config({"nlp_languages": ",".join(langs)}, hermes_home)
-        print(f"Saved nlp.languages: {', '.join(langs)} -> {config_path}")
+        provider.save_config({"languages": ",".join(langs)}, hermes_home)
+        print(f"Saved languages: {', '.join(langs)} -> {config_path}")
         # auto-install models for the selected languages
         import subprocess
         for l in langs:
@@ -413,7 +419,11 @@ def cmd_setup(args):
         if os.path.exists(cfg_path):
             with open(cfg_path) as f:
                 cfg = yaml.safe_load(f) or {}
-            langs = cfg.get("nlp", {}).get("languages", ["en"])
+            langs = (
+                cfg.get("languages")
+                or cfg.get("nlp", {}).get("languages")
+                or ["en"]
+            )  # canonical: languages (legacy: nlp.languages)
             if isinstance(langs, str):
                 langs = [l.strip() for l in langs.split(",")]
     except Exception:
