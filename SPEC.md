@@ -619,7 +619,7 @@ The system ships with two ONNX models, both running in-process on CPU via onnxru
 ## User Scoping (Internal)
 
 - user_id resolved from session context by the host identity system
-- Identity resolution chain: user manifest (users.yaml — canonical name, scope, guardian_of) → Matrix homeserver suffix stripping → raw user_id
+- Identity resolution chain: user manifest (inline `users:` block in limbic.yaml — primary; legacy `users.yaml` file layer honoured — canonical name, scope, guardian_of) → Matrix homeserver suffix stripping → raw user_id
 - All writes tagged with current user_id automatically (database field)
 - All reads filtered by current user_id automatically (WHERE clause)
 - Guardian case: searches use `user_id_any: [user_id] + list(guardian_of)` so a guardian sees both their own and their dependents' facts
@@ -1125,7 +1125,7 @@ class LimbicMemoryProvider:
 ```
 
 Identity resolution chain:
-1. **User manifest** — users.yaml (canonical name, scope, guardian_of) resolved via `manifest.resolve(platform_user_id, platform)`
+1. **User manifest** — inline `users:` block in limbic.yaml (primary; legacy `users.yaml` file honoured) for canonical name, scope, guardian_of, resolved via `manifest.resolve(platform_user_id, platform)`
 2. **Matrix fallback** — strip homeserver suffix from `@user:server.tld`, remove trailing digits, lowercase
 3. **Raw fallback** — use platform_user_id as-is, lowercased
 
