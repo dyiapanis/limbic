@@ -47,6 +47,7 @@ REJECTS = [
     "yes.. add audit lane",     # one-shot command ack (20)
     "Are you using dev branch?",  # verbatim chat question (26)
     "Did it exceed expectations?",  # verbatim chat question (27)
+    "to go through and thoroughly test your tools: I want to go through and thoroughly test your tools",  # verbatim self-repeat (98)
     "Go ahead from your end",   # one-shot command (22)
     "proceed with 1, 2 and 3",  # one-shot command (23)
     '"leave me alone, then"',   # quote-leading, no provenance (22)
@@ -161,6 +162,36 @@ def test_pair_gate_leg_unchanged(provider):
     """The pair leg (len<60 AND words<3) keeps its shape."""
     out = provider.remember("shut up", user_id="grace")
     assert out.get("status") == "rejected_fragment", out
+
+
+def test_question_leg_preexisting(provider):
+    """Regression: the bare-question offender is rejected by the leg that
+    already existed before the echo leg — no new logic needed for it."""
+    out = provider.remember("Did it exceed expectations?", user_id="grace")
+    assert out.get("status") == "rejected_fragment", out
+    assert "durable fact" in out["reason"], out
+
+
+def test_seed_rejects_self_echo(provider):
+    """seed() rides the same admission gate as remember()."""
+    out = provider.seed("grace",
+                        "to go through and thoroughly test your tools: "
+                        "I want to go through and thoroughly test your tools")
+    assert out.get("status") == "rejected_fragment", out
+    assert provider._storage.count("grace") == 0
+
+
+def test_echo_leg_shapes():
+    """Pure helper: normalization, overlap, and no-false-positive edges."""
+    f = LimbicMemoryProvider._is_self_echo
+    assert f("The deployment team rehearses the failover drill.   the "
+             "deployment team rehearses the failover drill")  # case+ws
+    assert f("a a a a a a a")                                       # overlap
+    assert f("to go through and thoroughly test your tools: "
+             "I want to go through and thoroughly test your tools")
+    assert not f("Grace is vegan")                                  # < ngram words
+    assert not f("Grace does not want gym sessions pushed to her "
+                 "smartwatch as training targets")                  # distinct
 
 
 def test_flat_band_requires_manifest(bare_provider):
