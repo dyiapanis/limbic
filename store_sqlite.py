@@ -450,7 +450,7 @@ class SQLiteStorage(LimbicStorage):
         if "split_role" not in cols:
             db.execute("ALTER TABLE facts ADD COLUMN split_role TEXT")
 
-        # Write provenance (t_2bf06c6a): 'agent' (caller-distilled, the long-
+        # Write provenance: 'agent' (caller-distilled, the long-
         # standing default) vs 'archive' (reconsolidated from an echo-served
         # excerpt). A column, not config — provenance is data, not a knob.
         cols = {r["name"] for r in db.execute("PRAGMA table_info(facts)").fetchall()}

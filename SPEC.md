@@ -1,6 +1,6 @@
 # Limbic — Opaque Memory System Specification
 
-**Version 0.9.9** · Author: D Yiapanis · License: MIT
+**Version 0.9.10** · Author: D Yiapanis · License: MIT
 
 ## Overview
 
@@ -865,6 +865,18 @@ def _compute_surprise(self, embedding: list[float], user_id: str) -> float:
 
 **Implementation:** The per-user centroid is cached in `_centroid_cache` and recomputed every 100 writes (tracked by `_centroid_write_count`). The distance distribution is cached in `_centroid_distances` for percentile ranking. Cosine distance: `1.0 - cosine_similarity` (0 = identical, 1.0 = orthogonal, 2.0 = opposite). Falls back to the magnitude-based stub when there are fewer than 2 existing facts (first facts have no reference distribution) or on any error.
 
+#### Archive write-back lane
+
+A fact rescued from the archive — an excerpt the echo fallback showed the agent, worth keeping — re-enters through the normal `remember` path with `source="archive"`. The lane is opinionated and knob-free:
+
+- **Proof of echo**: archive-provenance writes are admitted only while an echo excerpt is pending for that user in this session. The flag is set when the echo is served and consumed on use — one excerpt, one write-back, fail closed otherwise.
+- **Caller-distilled**: the calling agent does the distillation; the plugin stays no-LLM. A splittable blob on the archive lane is rejected — archive content arrives as one atomic fact or not at all.
+- **Same admission bar**: fragments, junk, and anything the fragment gate rejects on the agent lane are rejected identically here.
+- **Redaction at the boundary**: secret-shaped strings are redacted when the archive fact is written, exactly as they are when an echo excerpt is served.
+- **Reduced initial trust**: archive facts start at reduced trust and never take the Bayesian surprise boost — a re-asked wrong answer cannot arrive pre-believed. They mature, atrophy, and get corrected identically to agent-written facts.
+
+Provenance is stored on the fact (`source`: `agent` or `archive`); it is not a configuration option.
+
 ### 4. Thalamus — Routing and Gating (Prefetch Pipeline)
 
 ```
@@ -1107,7 +1119,15 @@ If pattern matches AND the new fact primes a mature fact (vector similarity > 0.
 
 Embeddings are not used for correction *detection* — only for the priming/similarity gate above. Embeddings capture topic similarity, not semantic opposition: "I eat meat" and "I am vegan" have high cosine similarity (both about diet), making corrections indistinguishable from continuations on embeddings alone. NLI (write-time) and regex patterns (read-time) are the correction detection mechanisms.
 
-### 7. Identity Interface
+### 7. Temporal Recall — Date-Aware Ranking (Thalamus)
+
+When a query names a time — an explicit date (ISO day, ISO month, or month-year) or a "when" / "how long ago" question — fact creation dates join the ranking as a proximity term. Detection is deliberately conservative: only explicit temporal language fires it, and everything else takes the standard composite ranking untouched.
+
+The proximity term is applied **after** the relevance floor gate. It can reorder the facts that already cleared salience — a fresh lower-trust fact overtaking a stale high-trust one — but it can never admit a near-miss through the floor. The amygdala's abstention behaviour is unchanged: a time-shaped query that finds no confident match still abstains.
+
+Anchored queries (a named date) score facts by closeness to that date; recency queries ("when…", "how long ago…") score by closeness to now. Both decay exponentially with the gap in days. When a temporal query surfaces a fact, the result carries the fact's filing date ("filed November 20") so the agent can reason about age explicitly.
+
+### 8. Identity Interface
 
 ```python
 class LimbicMemoryProvider:
@@ -1133,12 +1153,12 @@ Identity resolution chain:
 
 Concurrent sessions: session-keyed user_id cache with threading.Lock.
 
-### 8. Plugin Architecture
+### 9. Plugin Architecture
 
 ```yaml
 # plugin.yaml
 name: limbic
-version: 0.9.9
+version: 0.9.10
 description: "Self-organising memory system. Opaque, adaptive, self-contained. Modelled on the biological limbic system."
 author: "D Yiapanis"
 kind: exclusive
@@ -1158,18 +1178,18 @@ Activation is config-driven (`memory.provider: limbic` in the host profile's `co
 - **Limbic mirrors built-in writes as a safety net** (`on_memory_write`): if anything bypasses the disabled flags and writes to the built-in store, the fact is captured in Limbic too — nothing is silently lost during transition.
 - The built-in `memory` tool schema remains in `agent.valid_tool_names` even when disabled; Limbic's `system_prompt_block()` steers the agent to `remember`/`recall` instead.
 
-### 9. Trust Signal Evaluation
+### 10. Trust Signal Evaluation
 
 Last-injected buffer per session. On next turn's pre_llm_call:
 - Text overlap between injected fact content and new user message → continuation/correction
 - Trust adjustments persisted immediately
 - Signals recorded for adaptation engine
 
-### 10. Adaptive Parameter Storage
+### 11. Adaptive Parameter Storage
 
 Key-value store with min/max bounds. Updated every N turns (default 50). Clamped to bounds. Defaults seeded on first run. Stored as JSON file alongside the database (`limbic_params.json`).
 
-### 11. Database Triggers — Automated Trust Lifecycle
+### 12. Database Triggers — Automated Trust Lifecycle
 
 SQLite triggers fire atomically on write, moving write-time logic from Python polling into the database.
 
@@ -1188,7 +1208,7 @@ END
 
 **What stays in Python:** Composite scoring, activation sigmoid, correction propagation, and retrieval. These are read-time or conditional logic that doesn't map to triggers.
 
-### 12. Analytical Self-Evaluation
+### 13. Analytical Self-Evaluation
 
 The `stats()` operator function queries the store for performance metrics:
 

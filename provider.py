@@ -144,7 +144,7 @@ class LimbicMemoryProvider(MemoryProvider):
         self._entity_extractor = None
         self._initialised = False
 
-        # Reconsolidation write-back (t_2bf06c6a): uids with an echo excerpt
+        # Reconsolidation write-back: uids with an echo excerpt
         # served this session. An archive-provenance remember() is admitted
         # only while its uid holds a pending echo — the proof-of-echo gate.
         self._pending_echo: dict[str, bool] = {}
@@ -401,10 +401,26 @@ class LimbicMemoryProvider(MemoryProvider):
     # facts (splitter/atrophy lane), not the fragment gate's lane.
     _CHAT_SPEECH_MAX = 240
 
-    # Reconsolidation write-back (t_2bf06c6a): archive-provenance facts start
+    # Reconsolidation write-back: archive-provenance facts start
     # at reduced trust and never take the surprise boost — an excerpt rescued
     # from the archive must earn maturity, not arrive pre-believed.
     _ARCHIVE_INITIAL_TRUST = 0.25
+
+    # Temporal recall: when a query names a time (explicit patterns only),
+    # fact dates join the ranking as a proximity term. Applied AFTER the
+    # relevance floor gate — a time-boosted near-miss can reorder the gated
+    # pool but never cross the floor, so no new false-positive path exists.
+    _TEMPORAL_WEIGHT = 0.3
+    _TEMPORAL_TAU_DAYS = 30.0
+    _TEMPORAL_ISO_DAY_RE = re.compile(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b")
+    _TEMPORAL_ISO_MONTH_RE = re.compile(r"\b(\d{4})-(\d{1,2})\b")
+    _TEMPORAL_MONTH_YEAR_RE = re.compile(
+        r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{4})\b",
+        re.IGNORECASE)
+    _TEMPORAL_RECENCY_RE = re.compile(r"\bwhen\b|\bhow long ago\b", re.IGNORECASE)
+    _TEMPORAL_MONTHS = {ab: i for i, ab in enumerate(
+        ("jan", "feb", "mar", "apr", "may", "jun",
+         "jul", "aug", "sep", "oct", "nov", "dec"), start=1)}
     _DURABLE_DATE_RE = re.compile(
         r"\b(\d{4}-\d{1,2}-\d{1,2}"
         r"|\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?"
@@ -468,7 +484,7 @@ class LimbicMemoryProvider(MemoryProvider):
                  source: str = "agent") -> dict:
         """Store a fact. The hippocampus encodes experience into memory.
 
-        source="archive" is the reconsolidation write-back lane (t_2bf06c6a):
+        source="archive" is the reconsolidation write-back lane:
         the calling agent distills an echo-served excerpt into an atomic fact
         and files it with archive provenance. Plugin stays no-LLM — all
         distillation is the caller's.
@@ -492,7 +508,7 @@ class LimbicMemoryProvider(MemoryProvider):
             return {"status": "rejected_archive",
                     "reason": "No echo excerpt was served for this user — nothing to reconsolidate."}
 
-        # Echo→write boundary defense (t_2bf06c6a): the archive may show
+        # Echo→write boundary defense: the archive may show
         # secrets and session scaffolding in context that must never become
         # permanent portable facts. Re-apply the surface-boundary redaction
         # and scaffold strip at admission, regardless of caller diligence.
@@ -620,7 +636,7 @@ class LimbicMemoryProvider(MemoryProvider):
         # (sections/lists/paragraphs) embeds better as child facts. Single
         # narratives fall through to the whole-fact path unchanged.
         # Archive write-backs skip the splitter: the lane is atomic-facts-only
-        # (t_2bf06c6a) — a splittable blob means the caller failed to distill.
+        # — a splittable blob means the caller failed to distill.
         if source == "agent":
             split_result = self._plan_soft_split(content, uid, manifest_ok=manifest_ok)
             if split_result is not None:
@@ -648,7 +664,7 @@ class LimbicMemoryProvider(MemoryProvider):
         contradicted_ids = scan["contradicted_ids"]
 
         # Bayesian surprise — how novel is this fact? Archive-provenance facts
-        # take neither the surprise boost nor the 0.5 default (t_2bf06c6a):
+        # take neither the surprise boost nor the 0.5 default:
         # reduced initial trust so a re-asked wrong answer cannot arrive
         # pre-believed — it must earn maturity through corrections/recall.
         surprise = self._compute_surprise(embedding, uid)
@@ -1239,7 +1255,8 @@ class LimbicMemoryProvider(MemoryProvider):
             "results": [
                 {**({"parent_fact_id": r["split_parent_id"]}
                     if r.get("split_parent_id") else {}),
-                 "content": r["content"]}
+                 "content": r["content"],
+                 **({"filed": r["filed"]} if r.get("filed") else {})}
                 for r in surfaced
             ],
             "count": len(surfaced),
@@ -1254,6 +1271,70 @@ class LimbicMemoryProvider(MemoryProvider):
             logger.info("limbic: embedder warmed (~1s ONNX load paid outside dispatch)")
         except Exception as e:
             logger.warning("limbic: embedder warmup failed (will load lazily on first embed): %s", e)
+
+    # ── Temporal recall ────────────────────────────────────────────
+
+    def _temporal_intent(self, query: str):
+        """Conservative temporal-intent detector — explicit patterns only.
+
+        Returns ("anchor", days) when the query names a concrete date (ISO
+        day/month or month-year), ("recency", None) for "when"/"how long
+        ago" questions, else None. None means the ranking path is untouched
+        byte-for-byte.
+        """
+        if not query:
+            return None
+        m = self._TEMPORAL_ISO_DAY_RE.search(query)
+        if m:
+            try:
+                dt = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)),
+                              tzinfo=timezone.utc)
+            except ValueError:
+                dt = None
+            if dt is not None:
+                return ("anchor", dt.timestamp() / 86400.0)
+        m = self._TEMPORAL_MONTH_YEAR_RE.search(query)
+        if m and m.group(1).lower() in self._TEMPORAL_MONTHS:
+            try:
+                dt = datetime(int(m.group(2)), self._TEMPORAL_MONTHS[m.group(1).lower()],
+                              1, tzinfo=timezone.utc)
+            except ValueError:
+                dt = None
+            if dt is not None:
+                return ("anchor", dt.timestamp() / 86400.0)
+        m = self._TEMPORAL_ISO_MONTH_RE.search(query)
+        if m:
+            try:
+                dt = datetime(int(m.group(1)), int(m.group(2)), 1,
+                              tzinfo=timezone.utc)
+            except ValueError:
+                dt = None
+            if dt is not None:
+                return ("anchor", dt.timestamp() / 86400.0)
+        if self._TEMPORAL_RECENCY_RE.search(query):
+            return ("recency", None)
+        return None
+
+    def _temporal_proximity(self, created_at, intent, now_days: float) -> float:
+        """0..1 closeness of a fact's date to the query's temporal intent."""
+        try:
+            dt = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+            fact_days = dt.timestamp() / 86400.0
+        except (ValueError, TypeError, OSError):
+            return 0.0
+        if intent[0] == "anchor" and intent[1] is not None:
+            gap = abs(fact_days - float(intent[1]))
+        else:
+            gap = abs(now_days - fact_days)
+        return math.exp(-gap / self._TEMPORAL_TAU_DAYS)
+
+    def _filed_label(self, created_at):
+        """Human timestamp for a surfaced fact, e.g. 'filed November 23'."""
+        try:
+            dt = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+        except (ValueError, TypeError, OSError):
+            return None
+        return f"filed {dt:%B} {dt.day}"
 
     def _search(self, query: str, user_id: str, limit: int = 20, session_id: str = "",
                 user_message: str = "") -> list[dict]:
@@ -1429,6 +1510,20 @@ class LimbicMemoryProvider(MemoryProvider):
             "facts_per_turn", self._config.get("context_budget", 20)
         )
         gated.sort(key=lambda f: f["composite_score"], reverse=True)
+
+        # Temporal recall: on a time-shaped query, fact dates re-rank the
+        # already-gated pool. The relevance floor gate above ran on the
+        # un-boosted composite — proximity reorders, never admits.
+        intent = self._temporal_intent(query)
+        if intent is not None and len(gated) > 1:
+            now_days = datetime.now(timezone.utc).timestamp() / 86400.0
+            for f in gated:
+                prox = self._temporal_proximity(f.get("created_at"), intent, now_days)
+                f["temporal_score"] = f["composite_score"] + self._TEMPORAL_WEIGHT * prox
+                label = self._filed_label(f.get("created_at"))
+                if label:
+                    f["filed"] = label
+            gated.sort(key=lambda f: f["temporal_score"], reverse=True)
 
         # Supersession (#19): when both sides of an OPEN contradiction clear
         # the floor for THIS query, the correction wins — the older fact is
