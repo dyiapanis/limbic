@@ -27,13 +27,13 @@ from limbic.trust import TrustEngine  # noqa: E402
 
 DIMS = 8
 
-MM_DEMETRI = "d" * 26   # canonical 26-char Mattermost id shape
+MM_OWNER = "d" * 26   # canonical 26-char Mattermost id shape
 MM_PEER = "k" * 26
 NEEDLE = "peer hit the re.findall greedy-match trap while parsing fixtures"
 
 MANIFEST_USERS = {
-    "demetri": {"display_name": "Demetri", "scope": "adult",
-                "platform_ids": {"mattermost": MM_DEMETRI}, "guardians": []},
+    "owner": {"display_name": "Owner", "scope": "adult",
+                "platform_ids": {"mattermost": MM_OWNER}, "guardians": []},
     "peer": {"display_name": "Peer", "scope": "child",
               "platform_ids": {"mattermost": MM_PEER}, "guardians": []},
 }
@@ -108,11 +108,11 @@ def _seed(tmp_path):
     p = _provider(tmp_path)
     db = _core(tmp_path)
     # questioner's own record: a scaffolded compaction summary holding the needle
-    _session(db, "sess-demetri", "mattermost", MM_DEMETRI)
-    _msg(db, "sess-demetri", "user",
+    _session(db, "sess-owner", "mattermost", MM_OWNER)
+    _msg(db, "sess-owner", "user",
          "[CONTEXT COMPACTION — REFERENCE ONLY] Earlier turns were compacted.\n"
          "---\n" + NEEDLE)
-    _msg(db, "sess-demetri", "user", "demetri asked about sqlite WAL tuning")
+    _msg(db, "sess-owner", "user", "owner asked about sqlite WAL tuning")
     # another user's record — echo must never cross
     _session(db, "sess-peer", "mattermost", MM_PEER)
     _msg(db, "sess-peer", "user", "peer's other private note about re.findall")
@@ -123,7 +123,7 @@ def _seed(tmp_path):
     _session(db, "sess-kanban", "kanban", "")
     _msg(db, "sess-kanban", "assistant", "kanban-internal re.findall chatter")
     # host frame — junk even in an owned session
-    _msg(db, "sess-demetri", "assistant",
+    _msg(db, "sess-owner", "assistant",
          "[System: Your previous response was truncated] re.findall")
     db.commit()
     return p, db
@@ -131,7 +131,7 @@ def _seed(tmp_path):
 
 def test_scope_and_scaffold_strip(tmp_path):
     p, _ = _seed(tmp_path)
-    echo = p._echo_fallback("re.findall", "demetri", "sess-demetri")
+    echo = p._echo_fallback("re.findall", "owner", "sess-owner")
     assert echo is not None, "the questioner's own scaffolded needle must echo"
     assert NEEDLE in echo["excerpt"], "content beneath the scaffold is kept"
     assert "[CONTEXT COMPACTION" not in echo["excerpt"], "markers stripped"
@@ -144,7 +144,7 @@ def test_cross_user_unreachable(tmp_path):
     p, _ = _seed(tmp_path)
     echo = p._echo_fallback("re.findall", "peer", "sess-peer")
     assert echo is not None
-    assert NEEDLE not in echo["excerpt"], "demetri's rows stay out of peer's echo"
+    assert NEEDLE not in echo["excerpt"], "owner's rows stay out of peer's echo"
     assert "other private note" in echo["excerpt"]
 
 
@@ -153,31 +153,31 @@ def test_unattributed_fail_closed(tmp_path):
     db = _core(tmp_path)
     _session(db, "sess-orphan", "mattermost", "")
     _msg(db, "sess-orphan", "user", "orphan re.findall row nobody owns")
-    _session(db, "sess-kanban", "kanban", MM_DEMETRI)  # agent class, even owned
+    _session(db, "sess-kanban", "kanban", MM_OWNER)  # agent class, even owned
     _msg(db, "sess-kanban", "user", "kanban re.findall row")
     db.commit()
-    assert p._echo_fallback("re.findall", "demetri", "sess-x") is None
+    assert p._echo_fallback("re.findall", "owner", "sess-x") is None
 
 
 def test_host_frame_excluded(tmp_path):
     p = _provider(tmp_path)
     db = _core(tmp_path)
-    _session(db, "sess-demetri", "mattermost", MM_DEMETRI)
-    _msg(db, "sess-demetri", "assistant",
+    _session(db, "sess-owner", "mattermost", MM_OWNER)
+    _msg(db, "sess-owner", "assistant",
          "[System: Your previous response was truncated] re.findall")
     db.commit()
-    assert p._echo_fallback("re.findall", "demetri", "sess-demetri") is None
+    assert p._echo_fallback("re.findall", "owner", "sess-owner") is None
 
 
 def test_feature_detect_degrades(tmp_path):
     p = _provider(tmp_path)
     db = _core(tmp_path)
-    _session(db, "s", "mattermost", MM_DEMETRI)
+    _session(db, "s", "mattermost", MM_OWNER)
     _msg(db, "s", "user", "a note")
     db.execute("DROP TABLE messages_fts")
     db.execute("DROP TABLE messages")
     db.commit()
-    assert p._echo_fallback("anything", "demetri", "s") is None
+    assert p._echo_fallback("anything", "owner", "s") is None
     out = p.recall("anything", session_id="s")
     assert out["status"] == "no_confident_match"
     assert "echo" not in out, "abstention looks exactly like yesterday"
@@ -197,11 +197,11 @@ def test_prefetch_byte_identical(tmp_path):
 def test_excerpt_counts_against_budget(tmp_path):
     p = _provider(tmp_path)
     db = _core(tmp_path)
-    _session(db, "s", "mattermost", MM_DEMETRI)
+    _session(db, "s", "mattermost", MM_OWNER)
     _msg(db, "s", "user", "wal tuning note " + "x" * 5000)
     db.commit()
     from limbic.provider import _estimate_tokens
-    echo = p._echo_fallback("wal tuning", "demetri", "s")
+    echo = p._echo_fallback("wal tuning", "owner", "s")
     assert echo is not None
     assert _estimate_tokens(echo["excerpt"]) <= 800
     assert echo["excerpt"].endswith("…")
@@ -209,8 +209,8 @@ def test_excerpt_counts_against_budget(tmp_path):
 
 def test_recall_abstention_carries_echo(tmp_path):
     p, _ = _seed(tmp_path)
-    p._get_user_id = lambda sid: "demetri"
-    out = p.recall("re.findall", session_id="sess-demetri")
+    p._get_user_id = lambda sid: "owner"
+    out = p.recall("re.findall", session_id="sess-owner")
     assert out["status"] == "no_confident_match"
     assert out.get("echo", {}).get("label") == _ECHO_LABEL
     assert NEEDLE in out["echo"]["excerpt"]
@@ -218,7 +218,7 @@ def test_recall_abstention_carries_echo(tmp_path):
 
 def test_near_miss_abstention_carries_echo(tmp_path):
     p, _ = _seed(tmp_path)
-    p._get_user_id = lambda sid: "demetri"
+    p._get_user_id = lambda sid: "owner"
     emb = [1.0] + [0.0] * (DIMS - 1)
     p._embedder = type("E", (), {
         "embed": staticmethod(lambda q, is_query=False: emb)})()
@@ -228,7 +228,7 @@ def test_near_miss_abstention_carries_echo(tmp_path):
     p._storage.search_fts = staticmethod(lambda *a, **kw: [])
     p._storage.search_graph = staticmethod(lambda *a, **kw: [])
     p._storage.get_embedding = staticmethod(lambda *a, **kw: None)
-    out = p.recall("re.findall", session_id="sess-demetri")
+    out = p.recall("re.findall", session_id="sess-owner")
     assert out["status"] == "no_confident_match"
     assert NEEDLE in out.get("echo", {}).get("excerpt", "")
 
@@ -236,11 +236,11 @@ def test_near_miss_abstention_carries_echo(tmp_path):
 def test_echo_served_telemetry(tmp_path):
     p = _provider(tmp_path)
     db = _core(tmp_path)
-    _session(db, "s", "mattermost", MM_DEMETRI)
+    _session(db, "s", "mattermost", MM_OWNER)
     _msg(db, "s", "user", "a wal tuning note")
     db.commit()
     before = p._storage.get_metrics().get("echo_served", 0)
-    p._echo_fallback("wal tuning", "demetri", "s")
+    p._echo_fallback("wal tuning", "owner", "s")
     after = p._storage.get_metrics().get("echo_served", 0)
     assert after == before + 1
 

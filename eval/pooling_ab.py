@@ -23,7 +23,7 @@ FACTS = [
     "User prefers concise responses without tables in chat interfaces.",
     "The weekly model monitoring cron job id is c4e9a2f17b3d.",
     "GPG automation key fingerprint 4F2A8C15D90B7E36F58C21A4B09D5E7731C2F8A0.",
-    "Camoufox is a Firefox fork with anti-fingerprinting patches for stealth browsing.",
+    "A Firefox fork with anti-fingerprinting patches for stealth browsing.",
     "The rendering service is deployed on Fly.io in Frankfurt.",
     "User is vegetarian and prefers meat-free alternatives by default.",
     "SQLite vec0 virtual tables store embeddings with cosine distance metric.",

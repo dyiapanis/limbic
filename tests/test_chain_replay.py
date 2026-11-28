@@ -4,7 +4,7 @@ Replays the committed real-chain twins (eval/chain_replay.json fleet_fact_id
 87/88, twin #87/#88) under both schedules and asserts the mechanism gates by
 measurement:
 
-- the unrestrained dock reproduces the fleet crater (post-dock trust to ~0);
+- the unrestrained dock reproduces an unbounded crater (post-dock trust to ~0);
 - the floored dock cannot go below min(old, correction_floor) at any dock;
 - floored-schedule links still resolve within correction_link_ttl (no
   repeat-clamp starvation — floor docking stops at the floor, which the tick

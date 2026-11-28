@@ -27,16 +27,16 @@ K = 5
 # (not keyword) recall.
 CORPUS = {
     "family": [
-        "Demetri's mother Elena lives in Nicosia and calls every Sunday evening",
-        "Elena is allergic to penicillin and carries a card for it",
-        "Demetri's brother Andreas studied architecture in Athens",
-        "Andreas and his wife Maya have twin daughters born in March",
-        "The family gathers in Nicosia every Christmas for Elena's baking",
-        "Demetri's father passed away three years ago; he was a carpenter",
-        "Maya is a paediatric nurse at the general hospital",
-        "Andreas restores vintage furniture as a weekend craft",
-        "Elena grows roses and lemons on her small Nicosia terrace",
-        "The twins are called Sofia and Lina and they are seven years old",
+        "Alex's mother Maria lives in Valencia and calls every Sunday evening",
+        "Maria is allergic to penicillin and carries a card for it",
+        "Alex's brother Nikos studied architecture in Lyon",
+        "Nikos and his wife Ines have twin daughters born in March",
+        "The family gathers in Valencia every Christmas for Maria's baking",
+        "Alex's father passed away three years ago; he was a carpenter",
+        "Ines is a paediatric nurse at the general hospital",
+        "Nikos restores vintage furniture as a weekend craft",
+        "Maria grows roses and lemons on her small Valencia terrace",
+        "The twins are called Ana and Bea and they are seven years old",
     ],
     "work": [
         "The flagship client project uses a Postgres-backed billing ledger",
@@ -152,7 +152,7 @@ CORPUS = {
 QUERIES = [
     ("family", "who in the family has a medicine allergy?", [1]),
     ("family", "where does the grandmother grow her fruit?", [6, 8]),
-    ("family", "what do Andreas's kids do for school age?", [8]),
+    ("family", "what do Nikos's kids do for school age?", [8]),
     ("work", "when do we hold the sprint review meeting?", [1]),
     ("work", "why was the gateway rewritten?", [5]),
     ("work", "who runs the on-call schedule?", [8, 2]),

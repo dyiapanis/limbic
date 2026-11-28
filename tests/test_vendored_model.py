@@ -26,8 +26,8 @@ def test_model_path_prefers_vendored_dir():
 def test_vendored_model_loads_and_extracts():
     """Loads from the vendored directory — proves no package install is needed."""
     nlp = spacy.load(_model_path("en_core_web_sm"))
-    ents = {e.text for e in nlp("Demetri met Adira in Brisbane last Tuesday.").ents}
-    assert ents & {"Demetri", "Adira", "Brisbane"}, ents
+    ents = {e.text for e in nlp("Alex met Dana in Sydney last Tuesday.").ents}
+    assert ents & {"Alex", "Dana", "Sydney"}, ents
 
 
 def test_other_languages_fall_back_to_package_name():
