@@ -28,14 +28,14 @@ from limbic.trust import TrustEngine  # noqa: E402
 DIMS = 8
 
 MM_DEMETRI = "d" * 26   # canonical 26-char Mattermost id shape
-MM_KIRNI = "k" * 26
-NEEDLE = "kirni hit the re.findall greedy-match trap while parsing fixtures"
+MM_PEER = "k" * 26
+NEEDLE = "peer hit the re.findall greedy-match trap while parsing fixtures"
 
 MANIFEST_USERS = {
     "demetri": {"display_name": "Demetri", "scope": "adult",
                 "platform_ids": {"mattermost": MM_DEMETRI}, "guardians": []},
-    "kirni": {"display_name": "Kirni", "scope": "child",
-              "platform_ids": {"mattermost": MM_KIRNI}, "guardians": []},
+    "peer": {"display_name": "Peer", "scope": "child",
+              "platform_ids": {"mattermost": MM_PEER}, "guardians": []},
 }
 
 
@@ -114,8 +114,8 @@ def _seed(tmp_path):
          "---\n" + NEEDLE)
     _msg(db, "sess-demetri", "user", "demetri asked about sqlite WAL tuning")
     # another user's record — echo must never cross
-    _session(db, "sess-kirni", "mattermost", MM_KIRNI)
-    _msg(db, "sess-kirni", "user", "kirni's other private note about re.findall")
+    _session(db, "sess-peer", "mattermost", MM_PEER)
+    _msg(db, "sess-peer", "user", "peer's other private note about re.findall")
     # unattributed session — fail-closed
     _session(db, "sess-orphan", "mattermost", "")
     _msg(db, "sess-orphan", "user", "orphan row mentioning re.findall nobody owns")
@@ -136,15 +136,15 @@ def test_scope_and_scaffold_strip(tmp_path):
     assert NEEDLE in echo["excerpt"], "content beneath the scaffold is kept"
     assert "[CONTEXT COMPACTION" not in echo["excerpt"], "markers stripped"
     assert echo["scaffold_stripped"] is True
-    assert "other private note" not in echo["excerpt"], "kirni unreachable"
+    assert "other private note" not in echo["excerpt"], "peer unreachable"
     assert echo["label"] == _ECHO_LABEL
 
 
 def test_cross_user_unreachable(tmp_path):
     p, _ = _seed(tmp_path)
-    echo = p._echo_fallback("re.findall", "kirni", "sess-kirni")
+    echo = p._echo_fallback("re.findall", "peer", "sess-peer")
     assert echo is not None
-    assert NEEDLE not in echo["excerpt"], "demetri's rows stay out of kirni's echo"
+    assert NEEDLE not in echo["excerpt"], "demetri's rows stay out of peer's echo"
     assert "other private note" in echo["excerpt"]
 
 
