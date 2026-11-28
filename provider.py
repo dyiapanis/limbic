@@ -144,6 +144,11 @@ class LimbicMemoryProvider(MemoryProvider):
         self._entity_extractor = None
         self._initialised = False
 
+        # Reconsolidation write-back (t_2bf06c6a): uids with an echo excerpt
+        # served this session. An archive-provenance remember() is admitted
+        # only while its uid holds a pending echo — the proof-of-echo gate.
+        self._pending_echo: dict[str, bool] = {}
+
         # Session state
         self._session_user_id: dict[str, str] = {}  # session_id → user_id
         self._session_buffer: dict[str, list] = {}  # session_id → last injected fact refs
@@ -395,6 +400,11 @@ class LimbicMemoryProvider(MemoryProvider):
     # is short; longer question-tailed or quote-leading dumps are paragraph
     # facts (splitter/atrophy lane), not the fragment gate's lane.
     _CHAT_SPEECH_MAX = 240
+
+    # Reconsolidation write-back (t_2bf06c6a): archive-provenance facts start
+    # at reduced trust and never take the surprise boost — an excerpt rescued
+    # from the archive must earn maturity, not arrive pre-believed.
+    _ARCHIVE_INITIAL_TRUST = 0.25
     _DURABLE_DATE_RE = re.compile(
         r"\b(\d{4}-\d{1,2}-\d{1,2}"
         r"|\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?"
@@ -454,14 +464,40 @@ class LimbicMemoryProvider(MemoryProvider):
         return bool(self._REQUEST_INTENT_RE.search(text))
 
     def remember(self, content: str, user_id: str | None = None,
-                 session_id: str | None = None) -> dict:
-        """Store a fact. The hippocampus encodes experience into memory."""
+                 session_id: str | None = None,
+                 source: str = "agent") -> dict:
+        """Store a fact. The hippocampus encodes experience into memory.
+
+        source="archive" is the reconsolidation write-back lane (t_2bf06c6a):
+        the calling agent distills an echo-served excerpt into an atomic fact
+        and files it with archive provenance. Plugin stays no-LLM — all
+        distillation is the caller's.
+        """
         if not self._initialised:
             return {"error": "Limbic not initialised"}
+
+        if source not in ("agent", "archive"):
+            return {"status": "rejected_source",
+                    "reason": "source must be 'agent' or 'archive'"}
 
         uid = user_id or self._get_user_id(session_id or "")
         if uid is None:
             return {"error": "No user_id resolved"}
+
+        # Proof-of-echo gate (trust boundary): an archive write-back is only
+        # legitimate after THIS provider served that user an echo excerpt.
+        # Consume on use — one excerpt, one write-back. Fail closed.
+        if source == "archive" and not self._pending_echo.pop(uid, False):
+            logger.info("limbic: rejected archive write-back without pending echo (uid=%s)", uid)
+            return {"status": "rejected_archive",
+                    "reason": "No echo excerpt was served for this user — nothing to reconsolidate."}
+
+        # Echo→write boundary defense (t_2bf06c6a): the archive may show
+        # secrets and session scaffolding in context that must never become
+        # permanent portable facts. Re-apply the surface-boundary redaction
+        # and scaffold strip at admission, regardless of caller diligence.
+        if source == "archive":
+            content = _redact_secrets(_strip_scaffold(content))
 
         manifest_ok = False
         # L3 (plan 2026-10-24): unresolved/garbage ids must not become memory
@@ -583,9 +619,12 @@ class LimbicMemoryProvider(MemoryProvider):
         # Atomic soft-split (sprint C5): long content with DETECTED structure
         # (sections/lists/paragraphs) embeds better as child facts. Single
         # narratives fall through to the whole-fact path unchanged.
-        split_result = self._plan_soft_split(content, uid, manifest_ok=manifest_ok)
-        if split_result is not None:
-            return split_result
+        # Archive write-backs skip the splitter: the lane is atomic-facts-only
+        # (t_2bf06c6a) — a splittable blob means the caller failed to distill.
+        if source == "agent":
+            split_result = self._plan_soft_split(content, uid, manifest_ok=manifest_ok)
+            if split_result is not None:
+                return split_result
 
 
         # Generate embedding
@@ -608,11 +647,17 @@ class LimbicMemoryProvider(MemoryProvider):
             return {"status": "deduplicated", "fact_id": scan["dedup_fact_id"]}
         contradicted_ids = scan["contradicted_ids"]
 
-        # Bayesian surprise — how novel is this fact?
+        # Bayesian surprise — how novel is this fact? Archive-provenance facts
+        # take neither the surprise boost nor the 0.5 default (t_2bf06c6a):
+        # reduced initial trust so a re-asked wrong answer cannot arrive
+        # pre-believed — it must earn maturity through corrections/recall.
         surprise = self._compute_surprise(embedding, uid)
-        initial_trust = 0.5
-        if surprise > self._trust.surprise_percentile_value():
-            initial_trust = 0.5 + self._trust.surprise_boost_value()
+        if source == "archive":
+            initial_trust = self._ARCHIVE_INITIAL_TRUST
+        else:
+            initial_trust = 0.5
+            if surprise > self._trust.surprise_percentile_value():
+                initial_trust = 0.5 + self._trust.surprise_boost_value()
 
         # Store
         fact_id = self._storage.store(
@@ -623,6 +668,7 @@ class LimbicMemoryProvider(MemoryProvider):
                 "trust_score": initial_trust,
                 "retrieval_count": 0,
                 "created_at": _now_iso(),
+                "source": source,
             },
             principal_vouched=manifest_ok,
         )
@@ -1120,6 +1166,9 @@ class LimbicMemoryProvider(MemoryProvider):
             if not kept or not kept[0]["content"]:
                 return None
             self._bump("echo_served")
+            # The served excerpt authorises exactly one archive-provenance
+            # write-back for this user (consumer: remember(source="archive")).
+            self._pending_echo[uid] = True
             return {
                 "label": _ECHO_LABEL,
                 "excerpt": kept[0]["content"],

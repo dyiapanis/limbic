@@ -34,6 +34,15 @@ REMEMBER_SCHEMA = {
                 "type": "string",
                 "description": "The fact to store.",
             },
+            "source": {
+                "type": "string",
+                "enum": ["agent", "archive"],
+                "description": (
+                    "Provenance. Use 'archive' only to reconsolidate an "
+                    "echo-served excerpt you just distilled into an atomic "
+                    "fact; omit for ordinary memories."
+                ),
+            },
         },
         "required": ["content"],
     },

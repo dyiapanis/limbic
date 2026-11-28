@@ -450,6 +450,13 @@ class SQLiteStorage(LimbicStorage):
         if "split_role" not in cols:
             db.execute("ALTER TABLE facts ADD COLUMN split_role TEXT")
 
+        # Write provenance (t_2bf06c6a): 'agent' (caller-distilled, the long-
+        # standing default) vs 'archive' (reconsolidated from an echo-served
+        # excerpt). A column, not config — provenance is data, not a knob.
+        cols = {r["name"] for r in db.execute("PRAGMA table_info(facts)").fetchall()}
+        if "source" not in cols:
+            db.execute("ALTER TABLE facts ADD COLUMN source TEXT DEFAULT 'agent'")
+
         # FTS5 virtual table for full-text search (external content table)
         db.execute("""
             CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
@@ -602,14 +609,16 @@ class SQLiteStorage(LimbicStorage):
             None,  # atrophy_marked_at
             metadata.get("created_at", now_iso),
             metadata.get("updated_at", now_iso),
+            metadata.get("source", "agent"),
         )
         def _txn():
             # AUTOINCREMENT assigns fact_id; lastrowid links the vec row.
             cur = self._db.execute(
                 """INSERT INTO facts (content, user_id, trust_score,
                    retrieval_count, last_retrieved,
-                   matured_at, atrophy_marked_at, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   matured_at, atrophy_marked_at, created_at, updated_at,
+                   source)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 params
             )
             fact_id = int(cur.lastrowid or 0)
