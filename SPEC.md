@@ -16,7 +16,7 @@ The system is modelled on the brain's limbic system. Each component maps to a br
 - **User-scoped** — user_id filtering enforced at code level on all reads and writes.
 - **Identity-agnostic** — consumes a user_id string and optional user_profile dict from the host. No dependency on any specific identity plugin.
 - **Storage-agnostic** — operates against a storage interface (`LimbicStorage` ABC). SQLite is the storage backend. The brain (hippocampus, amygdala, thalamus) is unchanged across storage implementations.
-- **Zero LLM cost** — no extraction on writes, no reasoning on reads. Lifecycle mechanisms are deterministic machinery operating on embeddings and scores, with one graded component: a small local NLI cross-encoder for contradiction detection — similarity-gated call sites, trust-penalty outputs, never an autonomous removal step.
+- **No LLM beyond the calling agent** — the plugin makes no LLM calls of its own: no extraction on writes, no reasoning on reads; distillation happens in the agent that calls `remember()`. Lifecycle mechanisms are deterministic machinery operating on embeddings and scores, with one graded component: a small local NLI cross-encoder for contradiction detection — similarity-gated call sites, trust-penalty outputs, never an autonomous removal step.
 - **Token-conscious** — every fact in the context block earns its place. Nothing is free-riding. Empty context is valid.
 
 ---
