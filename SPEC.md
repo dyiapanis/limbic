@@ -1,6 +1,6 @@
 # Limbic — Opaque Memory System Specification
 
-**Version 0.9.10** · Author: D Yiapanis · License: MIT
+**Version 0.9.11** · Author: D Yiapanis · License: MIT
 
 ## Overview
 
@@ -1158,7 +1158,7 @@ Concurrent sessions: session-keyed user_id cache with threading.Lock.
 ```yaml
 # plugin.yaml
 name: limbic
-version: 0.9.10
+version: 0.9.11
 description: "Self-organising memory system. Opaque, adaptive, self-contained. Modelled on the biological limbic system."
 author: "D Yiapanis"
 kind: exclusive

@@ -469,6 +469,31 @@ class LimbicMemoryProvider(MemoryProvider):
             r"\b(?:" + "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True)) + r")\b"
         )
 
+    @staticmethod
+    def _is_self_echo(content: str, ngram: int = 5) -> bool:
+        """True when the same ≥n-word sequence appears twice verbatim.
+
+        Exact repeat on whitespace/case-normalized words — no fuzzy
+        matching. A memory that hears itself talk carries no new fact.
+        """
+        words = " ".join(content.lower().split()).split()
+        seen = set()
+        for i in range(len(words) - ngram + 1):
+            gram = tuple(words[i:i + ngram])
+            if gram in seen:
+                return True
+            seen.add(gram)
+        return False
+
+    def _would_soft_split(self, content: str) -> bool:
+        """True when the splitter would take this blob (atomic-lane test)."""
+        frags = split_structured(
+            content,
+            min_total=int(self._config.get("split_threshold_chars", 700)),
+            min_child=int(self._config.get("split_child_min_chars", 120)),
+        )
+        return bool(frags) and len(frags) >= 2
+
     def _has_durable_marker(self, text: str) -> bool:
         """Escape set for the fragment-gate legs: a concrete date, a known
         principal, or a watch/intent request pattern (plan §C6)."""
@@ -607,6 +632,14 @@ class LimbicMemoryProvider(MemoryProvider):
                         len(stripped), len(stripped.split()))
             return {"status": "rejected_fragment",
                     "reason": f"Too short to be a durable fact (<{gate_chars} chars and <{gate_words} words)."}
+        # Echo leg fires on the atomic lane only — structured blobs
+        # legitimately repeat boilerplate across sections (the splitter's
+        # sibling-exemption exists for exactly that).
+        if self._is_self_echo(stripped) and not self._would_soft_split(stripped):
+            logger.info("limbic: rejected fragment (len=%d, class=self_echo)",
+                        len(stripped))
+            return {"status": "rejected_fragment",
+                    "reason": "Verbatim self-repeat carries no new fact."}
         if not self._has_durable_marker(stripped):
             if (len(stripped) < self._CHAT_SPEECH_MAX
                     and stripped.rstrip('"\'\u201d\u2019 ').endswith("?")):

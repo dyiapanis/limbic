@@ -318,9 +318,17 @@ def test_real_audit_fixture_all_children_stored_zero_penalties(provider):
 
 
 def test_sibling_exemption_near_identical_sections_both_land(tmp_path):
-    pad = " the deployment team rehearses the failover drill each morning"
-    sec = ("1. Drill:" + pad * 6 + " without exception reminders.")
-    near = ("2. Drill:" + pad * 6 + " without exception notes.")
+    # Six DISTINCT clauses — no verbatim self-repeat inside one section (the
+    # echo leg owns that case on the atomic lane) — sharing drill vocabulary
+    # so the two sections land in the near-identical cosine band.
+    clauses = (" the deployment team rehearses the failover drill each morning"
+               " the on-call lead reviews every alert threshold before the run"
+               " the network team traces each dropped packet to its source"
+               " the storage crew swaps the failing disk without downtime"
+               " the security pair rotates the vault keys after the exercise"
+               " the whole squad files one retro note before standing down")
+    sec = ("1. Drill:" + clauses + " without exception reminders.")
+    near = ("2. Drill:" + clauses + " without exception notes.")
     e = WordEmbedder()
     assert cosine(e.embed(sec), e.embed(near)) > 0.85   # the hostile band
 
