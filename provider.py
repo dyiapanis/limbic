@@ -25,6 +25,54 @@ from .splitting import split_structured
 from .storage import LimbicStorage
 from .trust import TrustEngine
 
+# ── Surface budget ────────────────────────────────────────────────────
+# The prefrontal surfaces only what awareness can carry. SPEC operating
+# point, recalibrated per release like the gate floors — never a user
+# knob. Tokens are estimated at ~4 chars/token, the same estimator the
+# retrieval benchmark uses, so the budget and the measurements stay on
+# one scale.
+SURFACE_BUDGET_TOKENS = 800
+
+# Below this many remaining tokens, a trimmed tail fact is a sliver that
+# carries no information — leave it dark instead of surfacing a fragment.
+_MIN_TAIL_TOKENS = 8
+
+
+def _estimate_tokens(text: str) -> int:
+    """Rough token estimate (~4 chars/token); matches the eval estimator."""
+    return max(1, len(text) // 4) if text else 0
+
+
+def _apply_surface_budget(results: list[dict]) -> list[dict]:
+    """Rank-ordered hard cap on surfaced tokens (SPEC: surface budget).
+
+    Walks results in relevance-rank order (the order `_search` returns —
+    composite-descending), keeping facts whole while they fit. The first
+    fact that crosses the budget is trimmed to the remainder (marked with
+    an ellipsis); everything after it stays dark. The input list and its
+    dicts are never mutated.
+    """
+    surfaced: list[dict] = []
+    remaining = SURFACE_BUDGET_TOKENS
+    for fact in results:
+        if remaining <= 0:
+            break
+        content = fact.get("content") or ""
+        cost = _estimate_tokens(content)
+        if cost <= remaining:
+            surfaced.append(fact)
+            remaining -= cost
+            continue
+        if remaining < _MIN_TAIL_TOKENS:
+            break
+        # Room for exactly `remaining` estimated tokens: len//4 must stay
+        # <= remaining, and one character is spent on the ellipsis marker.
+        keep = remaining * 4 - 1
+        trimmed = {**fact, "content": content[:keep].rstrip() + "…"}
+        surfaced.append(trimmed)
+        break
+    return surfaced
+
 logger = logging.getLogger(__name__)
 
 
@@ -1001,14 +1049,15 @@ class LimbicMemoryProvider(MemoryProvider):
                     "path": self._abstain_lane(query, uid, session_id or "",
                                                top_row),
                     "best_excerpt": (top_row.get("content") or "")[:120]}
+        surfaced = _apply_surface_budget(results)
         return {
             "results": [
                 {**({"parent_fact_id": r["split_parent_id"]}
                     if r.get("split_parent_id") else {}),
                  "content": r["content"]}
-                for r in results
+                for r in surfaced
             ],
-            "count": len(results),
+            "count": len(surfaced),
             "status": "ok",
             "top_score": round(top, 4),
         }
@@ -1251,6 +1300,14 @@ class LimbicMemoryProvider(MemoryProvider):
                             top_rel, trust.get("recall_confidence_floor"))
                 self._prefetch_latencies.append((time.perf_counter() - start_ts) * 1000)
                 return ""
+
+        # Surface budget: rank-ordered hard cap on surfaced tokens, cut
+        # BEFORE retrieval metadata — a fact the budget kept dark was not
+        # injected, and injection is what retrieval_count counts. The
+        # confidence guard above ran pre-cut on the uncut pool: the budget
+        # keeps the composite-order head, but under mixed trust the fact
+        # the guard gated on (max relevance) is not necessarily the head.
+        results = _apply_surface_budget(results)
 
         logger.info("limbic: prefetch user=%s results=%d", uid, len(results))
 
