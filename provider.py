@@ -1970,7 +1970,7 @@ class LimbicMemoryProvider(MemoryProvider):
             return {"error": "fact not found for user", "fact_id": fact_id}
         ok = self._storage.delete_fact(fact_id)
         # Invariant: EVERY deletion writes a hash-only receipt — the CLI path
-        # is not exempt (it was until 2026-10-23; caught by the fleet cleanup).
+        # is not exempt (caught by a cleanup pass).
         self._write_deletion_receipt(user_id, fact_id, fact.get("content", ""))
         return {"removed": ok, "fact_id": fact_id}
 

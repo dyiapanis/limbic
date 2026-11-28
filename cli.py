@@ -588,7 +588,7 @@ def backup_store(db_path, dest_dir, profile=None) -> dict:
 def _load_principals(path):
     """Parse a users.yaml manifest → the set of principal-scoped user_id values:
     canonical keys + every platform_ids value (matrix user ids kept raw and
-    @-stripped). Pass the fleet manifest via --principals; no principal names
+    @-stripped). Pass the principal manifest via --principals; no principal names
     are ever written into this repo."""
     import yaml
 

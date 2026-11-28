@@ -8,21 +8,24 @@ file for the standing marker list; any hit fails the suite before a push.
 # scanned; a fleet persona appearing as a natural word would need a full NER
 # pass. Extend MARKERS when a new surface (device, project, platform) ships.
 """
+import base64
 import os
 import subprocess
 
 here = os.path.dirname(os.path.abspath(__file__))
 reporoot = os.path.dirname(here)
 
-MARKERS = [
-    "demetris@yiapanis.co",
-    "phoenix1819",
-    "NICO BIBLE",
-    "Geekom",
-    "Polar Flow",
-    "JUMPER LAW",
-    "Kirni",
+_MARKERS_B64 = [
+    "ZGVtZXRyaXNAeWlhcGFuaXMuY28=",
+    "cGhvZW5peDE4MTk=",
+    "TklDTyBCSUJMRQ==",
+    "R2Vla29t",
+    "UG9sYXIgRmxvdw==",
+    "SlVNUEVSIExBVw==",
+    "S2lybmk=",
 ]
+# obfuscated so the scan's own detection data never sits in the tree as plaintext
+MARKERS = [base64.b64decode(m).decode() for m in _MARKERS_B64]
 
 
 def _packaged_files():
@@ -45,7 +48,7 @@ def tracked_text_files():
         if path.startswith("models/"):
             continue  # vendored spaCy package, not authored here
         if path == "tests/test_no_personal_markers.py":
-            continue  # this scan's own definition — its MARKERS list would self-match
+            continue  # own file: the obfuscated list is this file's whole content
         raw = open(os.path.join(reporoot, path), "rb").read(4_000_000)
         if b"\x00" in raw:
             continue  # binary heuristic — lexicons, ONNX, images
