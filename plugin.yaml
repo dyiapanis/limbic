@@ -1,5 +1,5 @@
 name: limbic
-version: 0.9.7
+version: 0.9.8
 description: "Self-organising memory system. Opaque, adaptive, self-contained. Modelled on the biological limbic system."
 author: "D Yiapanis"
 kind: exclusive
@@ -28,6 +28,10 @@ notes: |
   download. Other languages install via `hermes limbic languages --set`.
   Storage: SQLite (limbic.db, WAL mode, sqlite-vec brute-force KNN + FTS5).
   User scoping via WHERE clause on user_id received from host.
+  Echo fallback (abstention read side) reads Hermes core messages/messages_fts
+  in the shared state.db through a separate read-only (mode=ro) connection,
+  feature-detected with silent degradation; raw rows pass the same
+  user-manifest scope as stored facts; explicit recall only, never prefetch.
   NLI-based correction detection at write time (reconsolidation trigger).
   The plugin makes no LLM calls of its own — all reasoning happens in the
   calling agent, which distills memories before remember(); lifecycle

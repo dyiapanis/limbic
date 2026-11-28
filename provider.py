@@ -73,6 +73,52 @@ def _apply_surface_budget(results: list[dict]) -> list[dict]:
         break
     return surfaced
 
+
+# ── Echo fallback (the archive beneath the gate) ───────────────────────
+# When the confidence gate abstains on an explicit question, the raw record
+# (Hermes core messages, same SQLite file) may still hold the honest moment.
+# Echo surfaces ONE raw excerpt, plainly labelled — a quoted truth, never a
+# distilled one. The gate's verdict is untouched: echo runs after abstention,
+# on the explicit path only (SPEC: echo fallback).
+_ECHO_LABEL = "no confident memory — but this is in the record:"
+
+# Agent-internal host frames are never echo candidates (prefixes observed in
+# the live record). Bracketed markers NOT in this set — compaction scaffolds,
+# [OUT-OF-BAND USER MESSAGE] — carry real content and stay in the pool.
+_HOST_FRAME_RE = re.compile(
+    r"^\[(?:System(?: note)?|IMPORTANT|ASYNC DELEGATION|Cron delivery)\b")
+
+# Compaction scaffolding wraps the lived record in marker paragraphs; the
+# prose between the scaffolding lines IS the record (review amendment:
+# compaction summaries are candidate material, never excluded) — so only the
+# scaffolding lines themselves are stripped, at SURFACE time only. The rows
+# stay searchable whole; nested markers strip line-by-line.
+_COMPACTION_MARKER_RE = re.compile(
+    r"^\[CONTEXT COMPACTION[^\]]*\][^\n]*\n?", re.M)
+_COMPACTION_TAIL_RE = re.compile(
+    r"^--- END OF CONTEXT SUMMARY[^\n]*\n?", re.M)
+_SCAFFOLD_LINE_RE = re.compile(
+    r"^\[(?:PRIOR CONTEXT|END OF PRIOR CONTEXT)[^\]]*\][^\n]*\n?", re.M)
+
+# Secret-shape floor for the echo→surface boundary. The full redaction spec
+# belongs to the reconsolidation card; this floor keeps credential shapes
+# (API keys, tokens) out of surfaced excerpts from day one.
+_SECRET_SHAPE_RE = re.compile(
+    r"\b(?:sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}"
+    r"|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}"
+    r"|AKIA[0-9A-Z]{16}|[Bb]earer +[A-Za-z0-9._~+/=-]{16,})")
+
+
+def _strip_scaffold(text: str) -> str:
+    for rx in (_COMPACTION_MARKER_RE, _COMPACTION_TAIL_RE, _SCAFFOLD_LINE_RE):
+        text = rx.sub("", text)
+    return text.strip()
+
+
+def _redact_secrets(text: str) -> str:
+    return _SECRET_SHAPE_RE.sub("«redacted»", text)
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -1007,6 +1053,88 @@ class LimbicMemoryProvider(MemoryProvider):
             return "vector+fts" if in_fts else "vector"
         return "fts" if in_fts else "graph"
 
+    def _echo_fallback(self, query: str, uid: str, session_id: str) -> Optional[dict]:
+        """One honest moment from the archive (SPEC: echo fallback).
+
+        Scope is inherited, not re-decided: a raw row's session must resolve
+        through the SAME manifest identity that guards the store to the
+        questioner (or a person this session guardians). Sessions that resolve
+        to nobody, and the unattributed agent classes (kanban/subagent/cli/
+        cron), are excluded fail-closed — raw rows carry no write-time
+        attribution, so nothing is ever attributed to the questioner post hoc.
+        Any failure degrades to None: abstention looks exactly like yesterday.
+        Read-only over core tables; explicit recall only — prefetch never
+        pays for this.
+        """
+        # initialised() wires these; bare instances (tests, single-user
+        # defaults) may lack them entirely — echo declines, never crashes.
+        manifest = getattr(self, "_manifest", None)
+        storage = getattr(self, "_storage", None)
+        embedder = getattr(self, "_embedder", None)
+        if manifest is None or storage is None or embedder is None:
+            return None
+        try:
+            rows = storage.search_raw_messages(query, limit=20)
+            if not rows:
+                return None
+            query_vec = embedder.embed(query, is_query=True)
+            if query_vec is None:
+                return None
+            excluded_classes = {"kanban", "subagent", "cli", "cron"}
+            allowed = {uid, *getattr(self, "_session_guardian_of", {}).get(
+                session_id, [])}
+            candidates = []
+            for lexical_rank, r in enumerate(rows):
+                if (r["source"] or "") in excluded_classes or not (
+                        r["user_id"] or ""):
+                    continue
+                ident = manifest.resolve(r["user_id"], r["source"] or "")
+                if ident is None or ident.canonical not in allowed:
+                    continue
+                content = r["content"] or ""
+                if not content or _HOST_FRAME_RE.match(content):
+                    continue
+                # Strip-then-select: candidates compete on what would
+                # actually surface, so scaffold remnants never win RRF.
+                stripped = _redact_secrets(_strip_scaffold(content))
+                if not stripped:
+                    continue
+                vec = embedder.embed(stripped[:4000], is_query=False)
+                cos = (0.0 if vec is None
+                       else 1.0 - self._cosine_distance(vec, query_vec))
+                candidates.append((r, cos, lexical_rank))
+            if not candidates:
+                return None
+            # Reciprocal-rank fusion of the lexical rank (bm25 order) and the
+            # cosine rank over the bounded candidate set — same fusion shape
+            # as _search uses for facts.
+            cos_rank = {id(c): i for i, c in enumerate(
+                sorted(candidates, key=lambda c: -c[1]))}
+            k = 60
+            best = max(candidates, key=lambda c: (
+                1.0 / (k + c[2] + 1) + 1.0 / (k + cos_rank[id(c)] + 1)))
+            r = best[0]
+            content_raw = r["content"] or ""
+            excerpt = _redact_secrets(_strip_scaffold(content_raw))
+            kept = _apply_surface_budget([{"content": excerpt}])
+            if not kept or not kept[0]["content"]:
+                return None
+            self._bump("echo_served")
+            return {
+                "label": _ECHO_LABEL,
+                "excerpt": kept[0]["content"],
+                "role": r["role"],
+                "recorded": datetime.fromtimestamp(
+                    r["timestamp"], timezone.utc).isoformat(),
+                "scaffold_stripped": bool(
+                    r["compressed"] or _COMPACTION_MARKER_RE.search(content_raw)),
+            }
+        except Exception:
+            # Silent degradation is the SPEC contract: any failure in the
+            # echo lane leaves abstention exactly as it was.
+            logger.debug("limbic: echo fallback degraded", exc_info=True)
+            return None
+
     def recall(self, query: str, session_id: str | None = None) -> dict:
         """Search memory. The thalamus routes and gates."""
         if not self._initialised:
@@ -1023,10 +1151,14 @@ class LimbicMemoryProvider(MemoryProvider):
         if not results:
             self._bump("recall_abstain")
             floor = self._trust.get("recall_confidence_floor")
-            return {"results": [], "count": 0,
-                    "status": "no_confident_match", "top_score": 0.0,
-                    "floor": round(floor, 4) if floor is not None else None,
-                    "path": "none", "best_excerpt": None}
+            resp: dict = {"results": [], "count": 0,
+                          "status": "no_confident_match", "top_score": 0.0,
+                          "floor": round(floor, 4) if floor is not None else None,
+                          "path": "none", "best_excerpt": None}
+            echo = self._echo_fallback(query, uid, session_id or "")
+            if echo:
+                resp["echo"] = echo
+            return resp
 
         # Recall-confidence gate (read-side metacognition): the best fact's
         # RELEVANCE (cosine — the scale this floor is calibrated on) must clear
@@ -1043,12 +1175,16 @@ class LimbicMemoryProvider(MemoryProvider):
             self._bump("recall_abstain")
             top_row = max(results, key=lambda r: float(
                 r.get("relevance", r.get("composite_score", 0.0)) or 0.0))
-            return {"results": [], "count": 0, "status": "no_confident_match",
+            resp = {"results": [], "count": 0, "status": "no_confident_match",
                     "top_score": round(top, 4),
                     "floor": round(conf_floor, 4),
                     "path": self._abstain_lane(query, uid, session_id or "",
                                                top_row),
                     "best_excerpt": (top_row.get("content") or "")[:120]}
+            echo = self._echo_fallback(query, uid, session_id or "")
+            if echo:
+                resp["echo"] = echo
+            return resp
         surfaced = _apply_surface_budget(results)
         return {
             "results": [
