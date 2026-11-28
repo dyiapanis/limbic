@@ -1,6 +1,6 @@
 # Limbic — Opaque Memory System Specification
 
-**Version 0.9.7** · Author: D Yiapanis · License: MIT
+**Version 0.9.8** · Author: D Yiapanis · License: MIT
 
 ## Overview
 
@@ -133,6 +133,7 @@ Each path catches what the others miss. Results are fused via Reciprocal Rank Fu
 - **Surface budget — 800 tokens.** Surfacing is also a capacity question: awareness carries a bounded payload per turn. Results are selected in relevance-rank order — the same order the composite score produces — keeping facts whole while they fit; the first fact that crosses the budget is trimmed to the remainder (marked with an ellipsis) and everything after it stays dark. The budget counts surfaced fact content only, estimated at ~4 chars/token, and is a SPEC operating point (`SURFACE_BUDGET_TOKENS = 800` in `provider.py`), recalibrated per release like the gate floors — never a user knob. A fact the budget keeps dark was not injected: `retrieval_count`/`last_retrieved` only move for facts that actually surface.
 - **Silent-facts fallback** — if no active facts pass the relevance gate, high-relevance silent facts (activation < 0.5 but embedding score >= floor) are returned as fallback so recall isn't empty when all matching facts are still maturing.
 - What surfaces is the system's best guess at what's relevant, ranked by signals the agent never sees
+- **Echo fallback — the gate stays silent, the archive echoes.** When recall refuses an explicit question (empty pool or nothing above the confidence floor), the raw record beneath the gate may still hold the honest moment. Echo surfaces exactly ONE raw excerpt from Hermes core messages, plainly labelled `no confident memory — but this is in the record:` — a quoted truth, never a distilled one. Scope is inherited, not re-decided: a raw row's session must resolve through the same user manifest that guards the store to the questioner (or a guardian relationship). Sessions that resolve to nobody, and the unattributed agent classes (kanban/subagent/cli/cron), are excluded fail-closed — raw rows carry no write-time attribution, so nothing is ever attributed to the questioner post hoc. Compaction scaffolding is stripped at surface time: summaries of past sessions are candidate material, never excluded. The excerpt passes a credential-shape redaction floor and counts against the surface budget. Reads go through a separate read-only (`mode=ro`) connection that feature-detects the core schema and degrades silently to plain abstention. Echo runs on the explicit recall path only — prefetch never pays for it. Telemetry: `echo_served`.
 
 ### Entorhinal Cortex — The Gateway (Spatial Coordinate System)
 
@@ -1137,7 +1138,7 @@ Concurrent sessions: session-keyed user_id cache with threading.Lock.
 ```yaml
 # plugin.yaml
 name: limbic
-version: 0.9.7
+version: 0.9.8
 description: "Self-organising memory system. Opaque, adaptive, self-contained. Modelled on the biological limbic system."
 author: "D Yiapanis"
 kind: exclusive

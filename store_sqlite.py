@@ -27,6 +27,7 @@ import sqlite3
 import struct
 import threading
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 import sqlite_vec
@@ -1097,6 +1098,47 @@ class SQLiteStorage(LimbicStorage):
             )
             return cur.rowcount or 0
         return self._write_txn(_txn)
+
+    def search_raw_messages(self, match_query: str, limit: int = 20) -> list[dict]:
+        """Echo-fallback candidates: FTS over Hermes core messages (read side).
+
+        Core-schema coupling: the host's core `messages`/`messages_fts` live
+        in `state.db`, a sibling of this store's file in the profile
+        directory. Echo opens its own read-only (mode=ro URI) connection per
+        call — it can never write core tables — and any absence of the
+        archive or schema drift returns [] so the caller degrades to plain
+        abstention. Rows are bounded (LIMIT, user+assistant, active); scope,
+        junk and scaffold policy live in the provider layer.
+        """
+        state_db = Path(self._db_path).parent / "state.db"
+        if not state_db.is_file():
+            return []
+        tokens = match_query.replace('"', " ").split()
+        if not tokens:
+            return []
+        safe_text = " ".join(f'"{t}"' for t in tokens)
+        uri = f"file:{state_db}?mode=ro"
+        try:
+            db = sqlite3.connect(uri, uri=True, timeout=2)
+            try:
+                rows = db.execute(
+                    """SELECT m.id, m.session_id, m.role, m.content, m.timestamp,
+                              m._compressed_summary AS compressed, s.source, s.user_id
+                         FROM messages_fts f
+                         JOIN messages m ON m.id = f.rowid
+                         JOIN sessions s ON s.id = m.session_id
+                        WHERE messages_fts MATCH ?
+                          AND m.role IN ('user','assistant')
+                          AND m.active = 1
+                        ORDER BY rank
+                        LIMIT ?""",
+                    (safe_text, max(1, int(limit)))).fetchall()
+            finally:
+                db.close()
+        except sqlite3.Error:
+            return []
+        return [dict(zip(("id", "session_id", "role", "content", "timestamp",
+                          "compressed", "source", "user_id"), r)) for r in rows]
 
     def search_fts(self, query_text: str, filters: dict, limit: int) -> list[dict]:
         with self._lock:

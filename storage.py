@@ -20,6 +20,11 @@ class LimbicStorage:
         """Full-text search using BM25. Override in implementations that support FTS."""
         return []  # default: no FTS support
 
+    def search_raw_messages(self, match_query: str, limit: int = 20) -> list[dict]:
+        """Echo-fallback candidates over core messages. Override in implementations
+        sharing a SQLite file with the host's message archive."""
+        return []  # default: no archive coupling
+
     def bump_metric(self, key: str, n: int = 1) -> None:
         """Recall outcome counter. Override in backends that persist metrics."""
         return  # default: no metric support
