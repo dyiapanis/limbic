@@ -29,7 +29,9 @@ notes: |
   Storage: SQLite (limbic.db, WAL mode, sqlite-vec brute-force KNN + FTS5).
   User scoping via WHERE clause on user_id received from host.
   NLI-based correction detection at write time (reconsolidation trigger).
-  No LLM cost — deterministic machinery with one graded component: a small
+  The plugin makes no LLM calls of its own — all reasoning happens in the
+  calling agent, which distills memories before remember(); lifecycle
+  mechanisms are deterministic machinery with one graded component: a small
   local NLI cross-encoder whose judgment drives contradiction detection;
   its call sites are gated by similarity bands and
   a measured entailment floor, its outputs feed trust penalties and dated
